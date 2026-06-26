@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "playground",
+  "main": "worker.js",
+  "compatibility_date": "2026-06-26",
+  "observability": { "enabled": true },
+  "assets": { "directory": ".", "binding": "ASSETS" },
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "sticky-notes",
+      "database_id": "PASTE_AFTER_CREATING_DB"
+    }
+  ]
+}

@@ -29,7 +29,6 @@
     color: var(--ui-text);
   }
 
-  /* ---- top bar ---- */
   .bar {
     height: 60px;
     display: flex;
@@ -47,11 +46,10 @@
     font-weight: 700;
     letter-spacing: 0.5px;
   }
-  .count {
-    font-size: 13px;
-    color: var(--ui-muted);
-    margin-right: auto;
-  }
+  .count { font-size: 13px; color: var(--ui-muted); }
+  .status { font-size: 13px; color: #e8a44d; margin-right: auto; }
+  .count + .status { margin-left: 4px; }
+  .spacer { margin-right: auto; }
   .add-btn {
     font-family: 'Inter', sans-serif;
     font-size: 14px;
@@ -68,7 +66,6 @@
   .add-btn:active { transform: scale(0.96); }
   .add-btn:focus-visible { outline: 2px solid #fce98a; outline-offset: 2px; }
 
-  /* ---- board ---- */
   .board {
     position: absolute;
     inset: 60px 0 0 0;
@@ -95,7 +92,6 @@
   .empty .big { font-family: 'Caveat', cursive; font-size: 32px; color: #6f6a62; }
   .empty .small { font-size: 14px; }
 
-  /* ---- a note ---- */
   .note {
     position: absolute;
     top: 0;
@@ -113,7 +109,6 @@
     flex-direction: column;
   }
   .note::after {
-    /* subtle peeled-corner shadow */
     content: "";
     position: absolute;
     right: 0; bottom: 0;
@@ -155,7 +150,6 @@
   .note textarea[readonly] { pointer-events: none; }
   .note textarea::placeholder { color: rgba(74,71,68,0.45); }
 
-  /* ---- per-note toolbar ---- */
   .toolbar {
     position: absolute;
     top: -42px;
@@ -202,6 +196,8 @@
   <div class="bar">
     <h1>Sticky Board</h1>
     <span class="count" id="count"></span>
+    <span class="status" id="status"></span>
+    <span class="spacer"></span>
     <button class="add-btn" id="add">+ New note</button>
   </div>
 
@@ -217,42 +213,46 @@
   "use strict";
 
   const COLORS = ["#fce98a", "#f7a8c0", "#a6d8f2", "#b7e4a0", "#fbc079", "#cbb6e8"];
-  const NOTE = 200;          // note width/height in px
-  const KEY  = "stickyboard:notes";
+  const NOTE = 200;
 
   const board = document.getElementById("board");
   const empty = document.getElementById("empty");
   const countEl = document.getElementById("count");
+  const statusEl = document.getElementById("status");
 
-  let notes = [];            // [{id, text, color, x, y, rot, z}]
-  const els = new Map();     // id -> element
+  let notes = [];
+  const els = new Map();
   let maxZ = 1;
   let selectedId = null;
   let editingId = null;
 
-  /* ---------- storage: Claude artifact OR a real website ---------- */
-  const hasClaudeStore =
-    typeof window !== "undefined" &&
-    window.storage &&
-    typeof window.storage.get === "function";
+  /* ---------- storage: the Worker + D1 API ---------- */
+  let statusTimer = null;
+  function flagSync() {
+    statusEl.textContent = "⚠ sync error";
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(function () { statusEl.textContent = ""; }, 4000);
+  }
 
-  const Store = {
-    async load() {
-      try {
-        if (hasClaudeStore) {
-          const r = await window.storage.get(KEY);
-          return r && r.value ? JSON.parse(r.value) : [];
-        }
-        const v = localStorage.getItem(KEY);
-        return v ? JSON.parse(v) : [];
-      } catch (e) { return []; }
+  const API = {
+    async list() {
+      const r = await fetch("/api/notes");
+      if (!r.ok) throw new Error("load failed: " + r.status);
+      return await r.json();
     },
-    async save() {
-      const data = JSON.stringify(notes);
+    async upsert(n) {
       try {
-        if (hasClaudeStore) await window.storage.set(KEY, data);
-        else localStorage.setItem(KEY, data);
-      } catch (e) { console.error("save failed", e); }
+        await fetch("/api/notes/" + encodeURIComponent(n.id), {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text: n.text, color: n.color, x: n.x, y: n.y, rot: n.rot, z: n.z })
+        });
+      } catch (e) { console.error("save failed", e); flagSync(); }
+    },
+    async remove(id) {
+      try {
+        await fetch("/api/notes/" + encodeURIComponent(id), { method: "DELETE" });
+      } catch (e) { console.error("delete failed", e); flagSync(); }
     }
   };
 
@@ -291,7 +291,6 @@
     pin.className = "pin";
     el.appendChild(pin);
 
-    // toolbar
     const tb = document.createElement("div");
     tb.className = "toolbar";
     COLORS.forEach(function (c) {
@@ -310,7 +309,6 @@
     tb.appendChild(del);
     el.appendChild(tb);
 
-    // text
     const ta = document.createElement("textarea");
     ta.value = n.text;
     ta.readOnly = true;
@@ -359,7 +357,7 @@
       ta.readOnly = true;
       el.classList.remove("editing");
       const n = notes.find(x => x.id === editingId);
-      if (n) { n.text = ta.value; Store.save(); }
+      if (n) { n.text = ta.value; API.upsert(n); }
     }
     editingId = null;
   }
@@ -382,7 +380,7 @@
     select(id);
     startEdit(n, el);
     updateChrome();
-    Store.save();
+    API.upsert(n);
   }
 
   function deleteNote(id) {
@@ -395,7 +393,7 @@
     if (selectedId === id) selectedId = null;
     if (editingId === id) editingId = null;
     updateChrome();
-    Store.save();
+    API.remove(id);
   }
 
   function recolor(n, el, color) {
@@ -404,23 +402,20 @@
     el.querySelectorAll(".swatch").forEach(function (s) {
       s.classList.toggle("active", s.dataset.color === color);
     });
-    Store.save();
+    API.upsert(n);
   }
 
   /* ---------- drag (pointer events: mouse + touch) ---------- */
-  let drag = null; // {id, el, n, offX, offY, moved}
+  let drag = null;
 
   board.addEventListener("pointerdown", function (e) {
     const el = e.target.closest(".note");
-
-    // clicked empty board -> deselect
     if (!el) { select(null); stopEdit(); return; }
 
     const id = el.dataset.id;
     const n = notes.find(x => x.id === id);
     if (!n) return;
 
-    // toolbar interactions
     const swatch = e.target.closest(".swatch");
     if (swatch) { recolor(n, el, swatch.dataset.color); return; }
     if (e.target.closest(".tool-del")) { deleteNote(id); return; }
@@ -428,7 +423,6 @@
     select(id);
     bringToFront(n, el);
 
-    // if we're editing this note, let the textarea handle the pointer
     if (editingId === id) return;
 
     e.preventDefault();
@@ -455,7 +449,7 @@
     d.el.classList.remove("dragging");
     applyTransform(d.el, d.n, false);
     try { d.el.releasePointerCapture(e.pointerId); } catch (_) {}
-    if (d.moved) Store.save();
+    if (d.moved) API.upsert(d.n);
   }
   board.addEventListener("pointerup", endDrag);
   board.addEventListener("pointercancel", endDrag);
@@ -467,7 +461,6 @@
       const n = notes.find(x => x.id === el.dataset.id);
       if (n) startEdit(n, el);
     } else {
-      // double-click empty board -> new note here
       const r = board.getBoundingClientRect();
       addNote(e.clientX - r.left, e.clientY - r.top);
     }
@@ -483,7 +476,6 @@
 
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && editingId) { stopEdit(); }
-    // delete selected note with Delete/Backspace when not editing
     if ((e.key === "Delete" || e.key === "Backspace") && selectedId && !editingId) {
       e.preventDefault();
       deleteNote(selectedId);
@@ -492,7 +484,6 @@
 
   document.getElementById("add").addEventListener("click", function () { addNote(); });
 
-  // keep notes on-screen if the window resizes
   window.addEventListener("resize", function () {
     notes.forEach(function (n) {
       clampNote(n);
@@ -503,7 +494,15 @@
 
   /* ---------- init ---------- */
   (async function init() {
-    notes = await Store.load();
+    try {
+      notes = await API.list();
+    } catch (e) {
+      console.error(e);
+      empty.querySelector(".big").textContent = "Couldn't reach the server";
+      empty.querySelector(".small").textContent = "The board can't load right now — try refreshing.";
+      empty.style.display = "flex";
+      return;
+    }
     maxZ = notes.reduce((m, n) => Math.max(m, n.z || 1), 1);
     notes.forEach(function (n) {
       if (typeof n.rot !== "number") n.rot = Math.random() * 8 - 4;
