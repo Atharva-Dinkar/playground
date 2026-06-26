@@ -68,7 +68,7 @@
   .pad {
     position: absolute;
     top: 16px; right: 16px;
-    width: 74px; height: 74px;
+    width: var(--note-size); height: var(--note-size);
     z-index: 6;
     cursor: grab;
     touch-action: none;
@@ -92,10 +92,10 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 26px;
+    font-size: 40px;
     font-weight: 500;
     color: #2a2730;
-    opacity: 0.45;
+    opacity: 0.4;
     pointer-events: none;
   }
   /* the top sheet tears up briefly as a note is peeled off */
@@ -362,6 +362,7 @@
   let editingId = null;
 
   let drag = null;             // note drag: {id, el, n, ..., isNew}
+  let padPeel = null;          // armed peel: {pointerId, startX, startY}
   let link = null;             // linking drag: {fromId, pointerId}
   let linkTarget = null;       // note id currently hovered as a link target
   let linkTempEl = null;       // temporary <path> shown while dragging a string
@@ -648,10 +649,17 @@
     s1.addEventListener("animationend", function () { pad.classList.remove("tore"); }, { once: true });
   }
 
-  function peelNote(e) {
+  // press the pad to arm a peel; the note only comes off once you pull away
+  function armPeel(e) {
     e.preventDefault();
+    padPeel = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY };
+    try { pad.setPointerCapture(e.pointerId); } catch (_) {}
+  }
+
+  // a note peels off (at the press point) and is handed to the drag machinery
+  function beginPeeledNote(e, startX, startY) {
     const r = board.getBoundingClientRect();
-    const made = makeNote(e.clientX - r.left - NOTE / 2, e.clientY - r.top - NOTE / 2);
+    const made = makeNote(startX - r.left - NOTE / 2, startY - r.top - NOTE / 2);
     const n = made.n, el = made.el;
     select(n.id);
     bringToFront(n, el);
@@ -661,11 +669,16 @@
     el.addEventListener("animationend", function () { el.classList.remove("peeling"); }, { once: true });
     triggerPadTear();
 
-    // hand it straight to the drag machinery so it follows the pointer
     try { el.setPointerCapture(e.pointerId); } catch (_) {}
     el.classList.add("dragging");
     applyTransform(el, n, true);
-    drag = { id: n.id, el: el, n: n, startX: e.clientX, startY: e.clientY, baseX: n.x, baseY: n.y, moved: false, isNew: true };
+    drag = { id: n.id, el: el, n: n, startX: startX, startY: startY, baseX: n.x, baseY: n.y, moved: true, isNew: true };
+  }
+
+  function cancelPeel() {
+    if (!padPeel) return;
+    try { pad.releasePointerCapture(padPeel.pointerId); } catch (_) {}
+    padPeel = null;
   }
 
   /* ---------- threads ---------- */
@@ -674,13 +687,33 @@
     return { x: n.x + NOTE / 2, y: n.y };
   }
 
-  // a quadratic curve with a little gravity: control point sags below the midpoint
-  function curve(ax, ay, bx, by) {
+  // control point for the resting string: sags below the midpoint by some gravity
+  function controlPoint(ax, ay, bx, by) {
     const dist = Math.hypot(bx - ax, by - ay);
     const sag = clamp(dist * 0.18, 16, 90);
-    const mx = (ax + bx) / 2;
-    const my = (ay + by) / 2 + sag;
-    return "M " + ax + " " + ay + " Q " + mx + " " + my + " " + bx + " " + by;
+    return { x: (ax + bx) / 2, y: (ay + by) / 2 + sag };
+  }
+
+  // a quadratic curve with a little gravity (the visible, full-length string)
+  function curve(ax, ay, bx, by) {
+    const c = controlPoint(ax, ay, bx, by);
+    return "M " + ax + " " + ay + " Q " + c.x + " " + c.y + " " + bx + " " + by;
+  }
+
+  // the clickable "grab" region: only the MIDDLE of the string, so the endpoints
+  // (which sit on the pins) never intercept clicks and can't be used to break it
+  function hitPathD(ax, ay, bx, by) {
+    const c = controlPoint(ax, ay, bx, by);
+    const T0 = 0.18, T1 = 0.82, STEPS = 12;
+    let d = "";
+    for (let i = 0; i <= STEPS; i++) {
+      const t = T0 + (T1 - T0) * (i / STEPS);
+      const u = 1 - t;
+      const x = u * u * ax + 2 * u * t * c.x + t * t * bx;
+      const y = u * u * ay + 2 * u * t * c.y + t * t * by;
+      d += (i === 0 ? "M " : "L ") + x + " " + y + " ";
+    }
+    return d.trim();
   }
 
   // a quadratic whose curve passes through point P at its midpoint (for pulling)
@@ -722,9 +755,8 @@
     pair.hit.style.display = "";
     pair.vis.style.display = "";
     const a = anchor(na), b = anchor(nb);
-    const d = curve(a.x, a.y, b.x, b.y);
-    pair.hit.setAttribute("d", d);
-    pair.vis.setAttribute("d", d);
+    pair.vis.setAttribute("d", curve(a.x, a.y, b.x, b.y));        // full string
+    pair.hit.setAttribute("d", hitPathD(a.x, a.y, b.x, b.y));     // grabbable middle only
     pair.vis.style.opacity = "";
     pair.vis.style.strokeWidth = "";
   }
@@ -860,8 +892,8 @@
     const hit = e.target.closest && e.target.closest(".thread-hit");
     if (hit) { startPull(hit.dataset.threadId, e); return; }
 
-    // peel a fresh note from the pad
-    if (e.target.closest(".pad")) { peelNote(e); return; }
+    // press the pad to arm a peel (a note comes off only when you pull away)
+    if (e.target.closest(".pad")) { armPeel(e); return; }
 
     const el = e.target.closest(".note");
 
@@ -902,6 +934,15 @@
   board.addEventListener("pointermove", function (e) {
     if (pull) { updatePull(e); return; }
     if (link) { updateLink(e); return; }
+    if (padPeel) {
+      const pdx = e.clientX - padPeel.startX;
+      const pdy = e.clientY - padPeel.startY;
+      if (Math.hypot(pdx, pdy) <= 8) return; // not pulled far enough yet
+      const sx = padPeel.startX, sy = padPeel.startY;
+      try { pad.releasePointerCapture(padPeel.pointerId); } catch (_) {}
+      padPeel = null;
+      beginPeeledNote(e, sx, sy); // sets `drag`; fall through to position it now
+    }
     if (!drag) return;
     const dx = e.clientX - drag.startX;
     const dy = e.clientY - drag.startY;
@@ -930,11 +971,13 @@
   board.addEventListener("pointerup", function (e) {
     if (pull) { finishPull(false); return; }
     if (link) { endLink(); return; }
+    if (padPeel) { cancelPeel(); return; } // released without pulling -> no note
     endDrag(e);
   });
   board.addEventListener("pointercancel", function (e) {
     if (pull) { finishPull(false); return; }
     if (link) { endLink(); return; }
+    if (padPeel) { cancelPeel(); return; }
     endDrag(e);
   });
 
