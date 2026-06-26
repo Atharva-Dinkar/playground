@@ -79,13 +79,13 @@
     position: absolute;
     inset: 0;
     border-radius: 2px;
-    background: #fce98a;
+    background: var(--c, #fce98a); /* the colour of the next note to be peeled */
     box-shadow: 0 1px 1px rgba(0,0,0,0.18), 0 6px 12px rgba(0,0,0,0.28);
     transition: transform 0.12s ease;
   }
   .pad-sheet.s1 { transform: rotate(-1deg); }
-  .pad-sheet.s2 { transform: rotate(3deg) translate(2px, 1px); background: #fbe07a; z-index: -1; }
-  .pad-sheet.s3 { transform: rotate(-5deg) translate(-2px, 2px); background: #f7d96a; z-index: -2; }
+  .pad-sheet.s2 { transform: rotate(3deg) translate(2px, 1px); filter: brightness(0.94); z-index: -1; }
+  .pad-sheet.s3 { transform: rotate(-5deg) translate(-2px, 2px); filter: brightness(0.86); z-index: -2; }
   .pad:hover .pad-sheet.s1 { transform: rotate(-1deg) translateY(-3px); }
   .pad-plus {
     position: absolute;
@@ -99,48 +99,39 @@
     opacity: 0.4;
     pointer-events: none;
   }
-  /* the top sheet tears up briefly as a note is peeled off */
-  @keyframes pad-tear {
-    0%   { transform: rotate(-1deg) translateY(0); }
-    45%  { transform: rotate(-9deg) translateY(-7px); }
-    100% { transform: rotate(-1deg) translateY(0); }
-  }
-  .pad.tore .pad-sheet.s1 { animation: pad-tear 0.3s ease; }
-
-  /* a freshly peeled note unfurls from its top-right (pad) corner */
-  @keyframes peel-off {
-    from { clip-path: polygon(100% 0, 100% 0, 100% 0, 100% 0); filter: brightness(1.12); }
-    to   { clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); filter: brightness(1); }
-  }
-  .note.peeling { animation: peel-off 0.26s ease-out; }
-
-  /* the visible "peel": a sheet hinges up off the pad as the note is pulled away */
-  .peel-ghost {
+  /* an e-reader page turn: the peeled sheet is a 3D page hinged on its left
+     edge. It follows the pointer and its turn angle tracks how far you pull. */
+  .curl {
     position: absolute;
     top: 16px; right: 16px;
     width: var(--note-size); height: var(--note-h);
-    border-radius: 2px;
-    background: var(--c, #fce98a);
-    box-shadow: 0 1px 1px rgba(0,0,0,0.18), 0 10px 20px rgba(0,0,0,0.30);
-    transform-origin: bottom center;
-    pointer-events: none;
     z-index: 99999;
-    will-change: transform, opacity;
-    animation: peel-ghost 0.42s ease-in forwards;
+    perspective: 1000px;
+    pointer-events: none;
+    will-change: transform;
   }
-  /* a soft highlight along the lifting edge, for a paper-curl feel */
-  .peel-ghost::after {
-    content: "";
+  .curl-inner {
     position: absolute;
-    left: 0; right: 0; top: 0;
-    height: 45%;
-    border-radius: 2px 2px 0 0;
-    background: linear-gradient(to bottom, rgba(255,255,255,0.5), rgba(255,255,255,0));
+    inset: 0;
+    transform-style: preserve-3d;
+    transform-origin: left center; /* hinge on the spine */
+    will-change: transform;
   }
-  @keyframes peel-ghost {
-    0%   { transform: perspective(700px) rotateX(0deg) translateY(0) scale(1); opacity: 1; }
-    55%  { transform: perspective(700px) rotateX(-62deg) translateY(-16px) scale(1.03); opacity: 1; }
-    100% { transform: perspective(700px) rotateX(-105deg) translateY(-50px) scale(1.05); opacity: 0; }
+  .curl-face {
+    position: absolute;
+    inset: 0;
+    border-radius: 2px;
+    backface-visibility: hidden;
+    box-shadow: 0 10px 22px rgba(0,0,0,0.32);
+  }
+  .curl-front {
+    background: var(--c, #fce98a);
+    background-image: linear-gradient(to left, rgba(0,0,0,0) 55%, rgba(0,0,0,0.22)); /* fold shadow toward the hinge */
+  }
+  .curl-back {
+    background: #efe7d6; /* the paper back */
+    transform: rotateY(180deg);
+    background-image: linear-gradient(to right, rgba(0,0,0,0) 55%, rgba(0,0,0,0.16));
   }
 
   /* thread overlay — drawn over the notes; only the strings take pointer events */
@@ -340,8 +331,6 @@
 
   @media (prefers-reduced-motion: reduce) {
     .note, .pad-sheet, .pin { transition: none; }
-    .note.peeling, .pad.tore .pad-sheet.s1 { animation: none; }
-    .peel-ghost { animation: none; opacity: 0; }
   }
 </style>
 </head>
@@ -376,6 +365,7 @@
   const NOTE = 150;
   const SVGNS = "http://www.w3.org/2000/svg";
   const BREAK_PULL = 120; // how far you must pull a string before it snaps
+  const PEEL_COMMIT = 110; // how far you pull a page off the pad before it fully turns
 
   const board = document.getElementById("board");
   const empty = document.getElementById("empty");
@@ -394,6 +384,8 @@
 
   let drag = null;             // note drag: {id, el, n, ..., isNew}
   let padPeel = null;          // armed peel: {pointerId, startX, startY}
+  let peelCurl = null;         // page-turn in progress: {pointerId, el, color, pendingNext, ...}
+  let nextColor = COLORS[0];   // colour shown on the pad = the next note's colour
   let link = null;             // linking drag: {fromId, pointerId}
   let linkTarget = null;       // note id currently hovered as a link target
   let linkTempEl = null;       // temporary <path> shown while dragging a string
@@ -617,11 +609,11 @@
   }
 
   /* ---------- create / delete / colour ---------- */
-  function makeNote(x, y) {
+  function makeNote(x, y, color) {
     const n = {
       id: uid(),
       text: "",
-      color: COLORS[Math.floor(Math.random() * COLORS.length)],
+      color: color || randomColor(),
       x: x,
       y: y,
       rot: Math.random() * 8 - 4,
@@ -670,57 +662,86 @@
     API.upsert(n);
   }
 
-  /* ---------- peel a fresh note from the pad ---------- */
-  function triggerPadTear() {
-    const s1 = pad.querySelector(".pad-sheet.s1");
-    if (!s1) return;
-    pad.classList.remove("tore");
-    void pad.offsetWidth; // restart the animation if peeling rapidly
-    pad.classList.add("tore");
-    s1.addEventListener("animationend", function () { pad.classList.remove("tore"); }, { once: true });
-  }
+  /* ---------- peel a fresh note from the pad (e-reader page turn) ---------- */
+  function randomColor() { return COLORS[Math.floor(Math.random() * COLORS.length)]; }
 
-  // press the pad to arm a peel; the note only comes off once you pull away
+  function setPadColor(c) { pad.style.setProperty("--c", c); }
+
+  // press the pad to arm a peel; the page only turns once you pull away
   function armPeel(e) {
     e.preventDefault();
     padPeel = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY };
     try { pad.setPointerCapture(e.pointerId); } catch (_) {}
   }
 
-  // a torn sheet that hinges up off the pad — the visible "peel"
-  function spawnPeelGhost(color) {
-    const g = document.createElement("div");
-    g.className = "peel-ghost";
-    g.style.setProperty("--c", color);
-    board.appendChild(g);
-    g.addEventListener("animationend", function () { g.remove(); }, { once: true });
-    setTimeout(function () { if (g.isConnected) g.remove(); }, 600); // fallback (e.g. reduced motion)
-  }
-
-  // a note peels off (at the press point) and is handed to the drag machinery
-  function beginPeeledNote(e, startX, startY) {
-    const r = board.getBoundingClientRect();
-    const made = makeNote(startX - r.left - NOTE / 2, startY - r.top - NOTE / 2);
-    const n = made.n, el = made.el;
-    select(n.id);
-    bringToFront(n, el);
-
-    // peel visuals: a sheet hinges up off the pad, the note unfurls, the pad tears
-    spawnPeelGhost(n.color);
-    el.classList.add("peeling");
-    el.addEventListener("animationend", function () { el.classList.remove("peeling"); }, { once: true });
-    triggerPadTear();
-
-    try { el.setPointerCapture(e.pointerId); } catch (_) {}
-    el.classList.add("dragging");
-    applyTransform(el, n, true);
-    drag = { id: n.id, el: el, n: n, startX: startX, startY: startY, baseX: n.x, baseY: n.y, moved: true, isNew: true };
-  }
-
   function cancelPeel() {
     if (!padPeel) return;
     try { pad.releasePointerCapture(padPeel.pointerId); } catch (_) {}
     padPeel = null;
+  }
+
+  // build the 3D page pinned to the pad and start tracking the turn
+  function startCurl(e, startX, startY) {
+    const curl = document.createElement("div");
+    curl.className = "curl";
+    curl.style.setProperty("--c", nextColor);
+    const inner = document.createElement("div");
+    inner.className = "curl-inner";
+    const back = document.createElement("div");
+    back.className = "curl-face curl-back";
+    const front = document.createElement("div");
+    front.className = "curl-face curl-front";
+    inner.appendChild(back);
+    inner.appendChild(front);
+    curl.appendChild(inner);
+    board.appendChild(curl);
+
+    // reveal the NEXT note's colour on the pad, beneath the turning page
+    const pendingNext = randomColor();
+    setPadColor(pendingNext);
+
+    peelCurl = { pointerId: e.pointerId, startX: startX, startY: startY, el: curl, inner: inner, color: nextColor, pendingNext: pendingNext };
+    try { board.setPointerCapture(e.pointerId); } catch (_) {}
+    updateCurl(e);
+  }
+
+  // returns true once the page has fully turned and a real note takes over
+  function updateCurl(e) {
+    const dx = e.clientX - peelCurl.startX;
+    const dy = e.clientY - peelCurl.startY;
+    const dist = Math.hypot(dx, dy);
+    if (dist >= PEEL_COMMIT) { commitCurl(e); return true; }
+    const angle = (dist / PEEL_COMMIT) * 165;
+    peelCurl.el.style.transform = "translate(" + dx + "px," + dy + "px)";  // follow the pointer
+    peelCurl.inner.style.transform = "rotateY(" + angle + "deg)";          // turn the page
+    return false;
+  }
+
+  // the page is off the pad -> a real note takes over and follows the pointer
+  function commitCurl(e) {
+    const color = peelCurl.color;
+    peelCurl.el.remove();
+    nextColor = peelCurl.pendingNext; // the pad already shows this colour
+    peelCurl = null;
+
+    const r = board.getBoundingClientRect();
+    const made = makeNote(e.clientX - r.left - NOTE / 2, e.clientY - r.top - NOTE / 2, color);
+    const n = made.n, el = made.el;
+    select(n.id);
+    bringToFront(n, el);
+    try { el.setPointerCapture(e.pointerId); } catch (_) {}
+    el.classList.add("dragging");
+    applyTransform(el, n, true);
+    drag = { id: n.id, el: el, n: n, startX: e.clientX, startY: e.clientY, baseX: n.x, baseY: n.y, moved: true, isNew: true };
+  }
+
+  // released before the page came off -> snap back, no note
+  function cancelCurl() {
+    if (!peelCurl) return;
+    try { board.releasePointerCapture(peelCurl.pointerId); } catch (_) {}
+    setPadColor(peelCurl.color); // restore the pad colour (nothing was peeled)
+    peelCurl.el.remove();
+    peelCurl = null;
   }
 
   /* ---------- threads ---------- */
@@ -979,11 +1000,16 @@
     if (padPeel) {
       const pdx = e.clientX - padPeel.startX;
       const pdy = e.clientY - padPeel.startY;
-      if (Math.hypot(pdx, pdy) <= 8) return; // not pulled far enough yet
+      if (Math.hypot(pdx, pdy) <= 8) return; // not pulled far enough to start the turn
       const sx = padPeel.startX, sy = padPeel.startY;
       try { pad.releasePointerCapture(padPeel.pointerId); } catch (_) {}
       padPeel = null;
-      beginPeeledNote(e, sx, sy); // sets `drag`; fall through to position it now
+      startCurl(e, sx, sy);
+      return;
+    }
+    if (peelCurl) {
+      if (!updateCurl(e)) return; // still turning the page
+      // committed -> `drag` is now set; fall through to position the note
     }
     if (!drag) return;
     const dx = e.clientX - drag.startX;
@@ -1013,12 +1039,14 @@
   board.addEventListener("pointerup", function (e) {
     if (pull) { finishPull(false); return; }
     if (link) { endLink(); return; }
-    if (padPeel) { cancelPeel(); return; } // released without pulling -> no note
+    if (peelCurl) { cancelCurl(); return; }  // let go mid-turn -> snap back, no note
+    if (padPeel) { cancelPeel(); return; }    // pressed but never pulled -> no note
     endDrag(e);
   });
   board.addEventListener("pointercancel", function (e) {
     if (pull) { finishPull(false); return; }
     if (link) { endLink(); return; }
+    if (peelCurl) { cancelCurl(); return; }
     if (padPeel) { cancelPeel(); return; }
     endDrag(e);
   });
@@ -1067,6 +1095,9 @@
 
   /* ---------- init ---------- */
   (async function init() {
+    nextColor = randomColor();
+    setPadColor(nextColor); // the pad shows the colour of the next note to peel
+
     try {
       notes = await API.list();
     } catch (e) {
