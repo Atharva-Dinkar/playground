@@ -112,6 +112,7 @@
     z-index: 100000;
   }
   .thread {
+    fill: none;
     stroke: var(--thread);
     stroke-width: 2;
     stroke-linecap: round;
@@ -564,25 +565,31 @@
   }
 
   function makeThreadEl(t) {
-    const line = document.createElementNS(SVGNS, "line");
-    line.setAttribute("class", "thread");
-    threadSvg.appendChild(line);
-    threadEls.set(t.id, line);
+    const path = document.createElementNS(SVGNS, "path");
+    path.setAttribute("class", "thread");
+    threadSvg.appendChild(path);
+    threadEls.set(t.id, path);
     positionThread(t);
   }
 
   function positionThread(t) {
-    const line = threadEls.get(t.id);
-    if (!line) return;
+    const path = threadEls.get(t.id);
+    if (!path) return;
     const na = notes.find(x => x.id === t.a);
     const nb = notes.find(x => x.id === t.b);
-    if (!na || !nb) { line.style.display = "none"; return; }
-    line.style.display = "";
+    if (!na || !nb) { path.style.display = "none"; return; }
+    path.style.display = "";
     const a = anchor(na), b = anchor(nb);
-    line.setAttribute("x1", a.x);
-    line.setAttribute("y1", a.y);
-    line.setAttribute("x2", b.x);
-    line.setAttribute("y2", b.y);
+    // hang the string with a little gravity: a quadratic curve whose control
+    // point sits below the midpoint, sagging more the further the notes are
+    const dist = Math.hypot(b.x - a.x, b.y - a.y);
+    const sag = clamp(dist * 0.18, 16, 90);
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2 + sag;
+    path.setAttribute(
+      "d",
+      "M " + a.x + " " + a.y + " Q " + mx + " " + my + " " + b.x + " " + b.y
+    );
   }
 
   function positionAllThreads() {
