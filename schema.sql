@@ -8,3 +8,10 @@ CREATE TABLE IF NOT EXISTS notes (
   z          INTEGER NOT NULL DEFAULT 1,
   updated_at INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS threads (
+  id         TEXT PRIMARY KEY,
+  a          TEXT    NOT NULL,
+  b          TEXT    NOT NULL,
+  updated_at INTEGER NOT NULL DEFAULT 0
+);

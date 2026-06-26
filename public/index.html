@@ -16,7 +16,8 @@
     --ink: #4a4744;
     --ui-text: #e7e3da;
     --ui-muted: #9b958c;
-    --note-size: 200px;
+    --thread: #d6453a;
+    --note-size: 150px;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -66,6 +67,28 @@
   .add-btn:active { transform: scale(0.96); }
   .add-btn:focus-visible { outline: 2px solid #fce98a; outline-offset: 2px; }
 
+  /* secondary "Connect" toggle — same shape, quieter colour */
+  .connect-btn {
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ui-text);
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 8px;
+    padding: 8px 14px;
+    cursor: pointer;
+    transition: transform 0.12s ease, filter 0.12s ease, background 0.12s ease;
+  }
+  .connect-btn:hover { background: rgba(255, 255, 255, 0.06); }
+  .connect-btn:active { transform: scale(0.96); }
+  .connect-btn:focus-visible { outline: 2px solid var(--thread); outline-offset: 2px; }
+  .connect-btn.active {
+    color: #2a2730;
+    background: var(--thread);
+    border-color: var(--thread);
+  }
+
   .board {
     position: absolute;
     inset: 60px 0 0 0;
@@ -74,6 +97,25 @@
     background-size: 26px 26px;
     overflow: hidden;
     touch-action: none;
+  }
+  .board.connect-mode { cursor: crosshair; }
+  .board.connect-mode .note { cursor: crosshair; }
+
+  /* thread overlay — drawn over the notes, never intercepts pointer events */
+  .threads {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    overflow: visible;
+    z-index: 100000;
+  }
+  .thread {
+    stroke: var(--thread);
+    stroke-width: 2;
+    stroke-linecap: round;
+    opacity: 0.85;
   }
 
   .empty {
@@ -97,9 +139,9 @@
     top: 0;
     left: 0;
     width: var(--note-size);
-    min-height: var(--note-size);
+    min-height: 48px;
     background: var(--c, #fce98a);
-    padding: 22px 18px 18px;
+    padding: 20px 16px 14px;
     cursor: grab;
     box-shadow: 0 1px 1px rgba(0,0,0,0.18), 0 8px 16px rgba(0,0,0,0.28);
     border-radius: 2px;
@@ -112,7 +154,7 @@
     content: "";
     position: absolute;
     right: 0; bottom: 0;
-    width: 38px; height: 38px;
+    width: 26px; height: 26px;
     background: linear-gradient(135deg, transparent 50%, rgba(0,0,0,0.10) 50%);
     border-bottom-right-radius: 2px;
   }
@@ -121,6 +163,7 @@
     box-shadow: 0 6px 8px rgba(0,0,0,0.22), 0 22px 40px rgba(0,0,0,0.40);
   }
   .note.editing { cursor: text; }
+  .note.connect-src { outline: 2px dashed var(--thread); outline-offset: 3px; }
 
   .pin {
     position: absolute;
@@ -133,7 +176,36 @@
     box-shadow: 0 2px 3px rgba(0,0,0,0.35);
   }
 
+  /* ---- title (first line, always shown) ---- */
+  .note .title {
+    font-family: 'Caveat', cursive;
+    font-size: 20px;
+    line-height: 1.25;
+    font-weight: 600;
+    color: var(--ink);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .note .title.placeholder { color: rgba(74,71,68,0.45); }
+
+  /* ---- body (the rest, shown only when the note is selected) ---- */
+  .note .body {
+    display: none;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(74,71,68,0.18);
+    font-family: 'Caveat', cursive;
+    font-size: 17px;
+    line-height: 1.3;
+    color: var(--ink);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .note.selected .body { display: block; }
+
+  /* ---- editing textarea (full text, replaces title/body) ---- */
   .note textarea {
+    display: none;
     flex: 1;
     width: 100%;
     border: none;
@@ -141,15 +213,18 @@
     resize: none;
     background: transparent;
     font-family: 'Caveat', cursive;
-    font-size: 22px;
+    font-size: 20px;
     line-height: 1.3;
     color: var(--ink);
     overflow: hidden;
-    cursor: inherit;
+    cursor: text;
   }
-  .note textarea[readonly] { pointer-events: none; }
+  .note.editing textarea { display: block; }
+  .note.editing .title,
+  .note.editing .body { display: none; }
   .note textarea::placeholder { color: rgba(74,71,68,0.45); }
 
+  /* ---- per-note toolbar ---- */
   .toolbar {
     position: absolute;
     top: -42px;
@@ -188,7 +263,7 @@
   .tool-del svg { width: 15px; height: 15px; }
 
   @media (prefers-reduced-motion: reduce) {
-    .note, .add-btn { transition: none; }
+    .note, .add-btn, .connect-btn { transition: none; }
   }
 </style>
 </head>
@@ -198,10 +273,12 @@
     <span class="count" id="count"></span>
     <span class="status" id="status"></span>
     <span class="spacer"></span>
+    <button class="connect-btn" id="connect">Connect</button>
     <button class="add-btn" id="add">+ New note</button>
   </div>
 
   <div class="board" id="board">
+    <svg class="threads" id="threads" aria-hidden="true"></svg>
     <div class="empty" id="empty">
       <div class="big">Nothing here yet</div>
       <div class="small">Double-click anywhere, or hit “+ New note”.</div>
@@ -213,18 +290,27 @@
   "use strict";
 
   const COLORS = ["#fce98a", "#f7a8c0", "#a6d8f2", "#b7e4a0", "#fbc079", "#cbb6e8"];
-  const NOTE = 200;
+  const NOTE = 150;
+  const SVGNS = "http://www.w3.org/2000/svg";
 
   const board = document.getElementById("board");
   const empty = document.getElementById("empty");
   const countEl = document.getElementById("count");
   const statusEl = document.getElementById("status");
+  const threadSvg = document.getElementById("threads");
+  const connectBtn = document.getElementById("connect");
 
-  let notes = [];
-  const els = new Map();
+  let notes = [];              // [{id, text, color, x, y, rot, z}]
+  let threads = [];            // [{id, a, b}]
+  const els = new Map();       // note id -> element
+  const threadEls = new Map(); // thread id -> <line>
   let maxZ = 1;
   let selectedId = null;
   let editingId = null;
+
+  // connect mode
+  let connectMode = false;
+  let connectFirst = null;     // first picked note id
 
   /* ---------- storage: the Worker + D1 API ---------- */
   let statusTimer = null;
@@ -253,6 +339,25 @@
       try {
         await fetch("/api/notes/" + encodeURIComponent(id), { method: "DELETE" });
       } catch (e) { console.error("delete failed", e); flagSync(); }
+    },
+    async listThreads() {
+      const r = await fetch("/api/threads");
+      if (!r.ok) throw new Error("threads load failed: " + r.status);
+      return await r.json();
+    },
+    async upsertThread(t) {
+      try {
+        await fetch("/api/threads/" + encodeURIComponent(t.id), {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ a: t.a, b: t.b })
+        });
+      } catch (e) { console.error("thread save failed", e); flagSync(); }
+    },
+    async removeThread(id) {
+      try {
+        await fetch("/api/threads/" + encodeURIComponent(id), { method: "DELETE" });
+      } catch (e) { console.error("thread delete failed", e); flagSync(); }
     }
   };
 
@@ -276,6 +381,13 @@
     const n = notes.length;
     countEl.textContent = n ? n + (n === 1 ? " note" : " notes") : "";
     empty.style.display = n ? "none" : "flex";
+  }
+
+  // first line is the title, the rest is the body
+  function splitText(t) {
+    t = t || "";
+    const i = t.indexOf("\n");
+    return i === -1 ? [t, ""] : [t.slice(0, i), t.slice(i + 1)];
   }
 
   /* ---------- build a note element ---------- */
@@ -309,6 +421,14 @@
     tb.appendChild(del);
     el.appendChild(tb);
 
+    const title = document.createElement("div");
+    title.className = "title";
+    el.appendChild(title);
+
+    const body = document.createElement("div");
+    body.className = "body";
+    el.appendChild(body);
+
     const ta = document.createElement("textarea");
     ta.value = n.text;
     ta.readOnly = true;
@@ -316,15 +436,32 @@
     ta.setAttribute("aria-label", "Note text");
     el.appendChild(ta);
 
-    autoGrow(ta);
+    renderText(el, n);
     board.appendChild(el);
     els.set(n.id, el);
     return el;
   }
 
+  // refresh the read-only title/body view from n.text
+  function renderText(el, n) {
+    const parts = splitText(n.text);
+    const title = parts[0], bodyText = parts[1];
+    const tEl = el.querySelector(".title");
+    const bEl = el.querySelector(".body");
+    if (title.length === 0) {
+      tEl.textContent = "Write a task…";
+      tEl.classList.add("placeholder");
+    } else {
+      tEl.textContent = title;
+      tEl.classList.remove("placeholder");
+    }
+    bEl.textContent = bodyText;
+    bEl.hidden = bodyText.length === 0;
+  }
+
   function autoGrow(ta) {
     ta.style.height = "auto";
-    ta.style.height = Math.max(140, ta.scrollHeight) + "px";
+    ta.style.height = Math.max(80, ta.scrollHeight) + "px";
   }
 
   /* ---------- selection ---------- */
@@ -341,10 +478,12 @@
 
   /* ---------- editing ---------- */
   function startEdit(n, el) {
+    if (connectMode) return;
     editingId = n.id;
     el.classList.add("editing");
     const ta = el.querySelector("textarea");
     ta.readOnly = false;
+    autoGrow(ta);
     ta.focus();
     const len = ta.value.length;
     ta.setSelectionRange(len, len);
@@ -357,7 +496,7 @@
       ta.readOnly = true;
       el.classList.remove("editing");
       const n = notes.find(x => x.id === editingId);
-      if (n) { n.text = ta.value; API.upsert(n); }
+      if (n) { n.text = ta.value; renderText(el, n); API.upsert(n); }
     }
     editingId = null;
   }
@@ -386,12 +525,19 @@
   function deleteNote(id) {
     const i = notes.findIndex(x => x.id === id);
     if (i === -1) return;
+
+    // drop any threads attached to this note first
+    threads.slice().forEach(function (t) {
+      if (t.a === id || t.b === id) removeThreadLocal(t.id, true);
+    });
+
     notes.splice(i, 1);
     const el = els.get(id);
     if (el) el.remove();
     els.delete(id);
     if (selectedId === id) selectedId = null;
     if (editingId === id) editingId = null;
+    if (connectFirst === id) connectFirst = null;
     updateChrome();
     API.remove(id);
   }
@@ -405,11 +551,115 @@
     API.upsert(n);
   }
 
+  /* ---------- threads ---------- */
+  function anchor(n) {
+    // tie the string to the pin: top-centre of the note (height-independent)
+    return { x: n.x + NOTE / 2, y: n.y };
+  }
+
+  function findThreadBetween(a, b) {
+    return threads.find(function (t) {
+      return (t.a === a && t.b === b) || (t.a === b && t.b === a);
+    });
+  }
+
+  function makeThreadEl(t) {
+    const line = document.createElementNS(SVGNS, "line");
+    line.setAttribute("class", "thread");
+    threadSvg.appendChild(line);
+    threadEls.set(t.id, line);
+    positionThread(t);
+  }
+
+  function positionThread(t) {
+    const line = threadEls.get(t.id);
+    if (!line) return;
+    const na = notes.find(x => x.id === t.a);
+    const nb = notes.find(x => x.id === t.b);
+    if (!na || !nb) { line.style.display = "none"; return; }
+    line.style.display = "";
+    const a = anchor(na), b = anchor(nb);
+    line.setAttribute("x1", a.x);
+    line.setAttribute("y1", a.y);
+    line.setAttribute("x2", b.x);
+    line.setAttribute("y2", b.y);
+  }
+
+  function positionAllThreads() {
+    threads.forEach(positionThread);
+  }
+
+  function positionThreadsFor(noteId) {
+    threads.forEach(function (t) {
+      if (t.a === noteId || t.b === noteId) positionThread(t);
+    });
+  }
+
+  function addThread(a, b) {
+    const t = { id: uid(), a: a, b: b };
+    threads.push(t);
+    makeThreadEl(t);
+    API.upsertThread(t);
+  }
+
+  function removeThreadLocal(id, alsoRemote) {
+    const i = threads.findIndex(x => x.id === id);
+    if (i === -1) return;
+    threads.splice(i, 1);
+    const line = threadEls.get(id);
+    if (line) line.remove();
+    threadEls.delete(id);
+    if (alsoRemote) API.removeThread(id);
+  }
+
+  /* ---------- connect mode ---------- */
+  function clearConnectFirst() {
+    if (connectFirst && els.has(connectFirst)) els.get(connectFirst).classList.remove("connect-src");
+    connectFirst = null;
+  }
+
+  function setConnectMode(on) {
+    connectMode = on;
+    board.classList.toggle("connect-mode", on);
+    connectBtn.classList.toggle("active", on);
+    clearConnectFirst();
+    if (on) {
+      select(null);
+      stopEdit();
+      statusEl.textContent = "Connect: pick two notes";
+    } else if (statusEl.textContent.indexOf("Connect") === 0) {
+      statusEl.textContent = "";
+    }
+  }
+
+  connectBtn.addEventListener("click", function () { setConnectMode(!connectMode); });
+
   /* ---------- drag (pointer events: mouse + touch) ---------- */
   let drag = null;
 
   board.addEventListener("pointerdown", function (e) {
     const el = e.target.closest(".note");
+
+    // ----- connect mode: clicks pick endpoints, nothing else -----
+    if (connectMode) {
+      if (!el) { clearConnectFirst(); return; }
+      const id = el.dataset.id;
+      if (!notes.find(x => x.id === id)) return;
+      if (connectFirst === null) {
+        connectFirst = id;
+        el.classList.add("connect-src");
+      } else if (connectFirst === id) {
+        clearConnectFirst();
+      } else {
+        const existing = findThreadBetween(connectFirst, id);
+        if (existing) removeThreadLocal(existing.id, true); // toggle off
+        else addThread(connectFirst, id);
+        clearConnectFirst();
+      }
+      return;
+    }
+
+    // clicked empty board -> deselect
     if (!el) { select(null); stopEdit(); return; }
 
     const id = el.dataset.id;
@@ -441,6 +691,7 @@
     drag.n.y = drag.baseY + dy;
     clampNote(drag.n);
     applyTransform(drag.el, drag.n, true);
+    positionThreadsFor(drag.id);
   });
 
   function endDrag(e) {
@@ -448,6 +699,7 @@
     const d = drag; drag = null;
     d.el.classList.remove("dragging");
     applyTransform(d.el, d.n, false);
+    positionThreadsFor(d.id);
     try { d.el.releasePointerCapture(e.pointerId); } catch (_) {}
     if (d.moved) API.upsert(d.n);
   }
@@ -456,10 +708,11 @@
 
   /* ---------- editing triggers ---------- */
   board.addEventListener("dblclick", function (e) {
+    if (connectMode) return;
     const el = e.target.closest(".note");
     if (el) {
       const n = notes.find(x => x.id === el.dataset.id);
-      if (n) startEdit(n, el);
+      if (n) { select(n.id); startEdit(n, el); }
     } else {
       const r = board.getBoundingClientRect();
       addNote(e.clientX - r.left, e.clientY - r.top);
@@ -475,8 +728,11 @@
   });
 
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && editingId) { stopEdit(); }
-    if ((e.key === "Delete" || e.key === "Backspace") && selectedId && !editingId) {
+    if (e.key === "Escape") {
+      if (connectMode) { setConnectMode(false); return; }
+      if (editingId) { stopEdit(); return; }
+    }
+    if ((e.key === "Delete" || e.key === "Backspace") && selectedId && !editingId && !connectMode) {
       e.preventDefault();
       deleteNote(selectedId);
     }
@@ -490,6 +746,7 @@
       const el = els.get(n.id);
       if (el && (!drag || drag.id !== n.id)) applyTransform(el, n, false);
     });
+    positionAllThreads();
   });
 
   /* ---------- init ---------- */
@@ -510,6 +767,18 @@
       makeEl(n);
     });
     updateChrome();
+
+    // threads are best-effort: if the API isn't deployed yet, just skip them
+    try {
+      threads = await API.listThreads();
+    } catch (e) {
+      console.error(e);
+      threads = [];
+    }
+    threads = threads.filter(function (t) {
+      return els.has(t.a) && els.has(t.b);
+    });
+    threads.forEach(makeThreadEl);
   })();
 })();
 </script>

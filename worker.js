@@ -1,5 +1,6 @@
 // Worker entry point.
-// - Requests to /api/notes are handled here, backed by the D1 database (env.DB).
+// - Requests to /api/notes and /api/threads are handled here, backed by the
+//   D1 database (env.DB).
 // - Everything else is served from your static files in /public (env.ASSETS).
 
 export default {
@@ -9,6 +10,14 @@ export default {
     if (url.pathname.startsWith("/api/notes")) {
       try {
         return await handleNotes(request, env, url);
+      } catch (err) {
+        return json({ error: String(err) }, 500);
+      }
+    }
+
+    if (url.pathname.startsWith("/api/threads")) {
+      try {
+        return await handleThreads(request, env, url);
       } catch (err) {
         return json({ error: String(err) }, 500);
       }
@@ -70,7 +79,56 @@ async function handleNotes(request, env, url) {
 
   // DELETE /api/notes/{id}
   if (method === "DELETE" && id) {
-    await db.prepare("DELETE FROM notes WHERE id = ?").bind(id).run();
+    // remove the note and any threads attached to it
+    await db.batch([
+      db.prepare("DELETE FROM threads WHERE a = ? OR b = ?").bind(id, id),
+      db.prepare("DELETE FROM notes WHERE id = ?").bind(id),
+    ]);
+    return json({ ok: true });
+  }
+
+  return json({ error: "Not found" }, 404);
+}
+
+async function handleThreads(request, env, url) {
+  const db = env.DB;
+  const method = request.method;
+
+  // Path is either /api/threads or /api/threads/{id}
+  const parts = url.pathname.split("/").filter(Boolean); // ["api", "threads", id?]
+  const id = parts[2] ? decodeURIComponent(parts[2]) : null;
+
+  // GET /api/threads  -> all threads
+  if (method === "GET" && !id) {
+    const { results } = await db
+      .prepare("SELECT id, a, b FROM threads")
+      .all();
+    return json(results || []);
+  }
+
+  // PUT /api/threads/{id}  -> create or update one thread
+  if (method === "PUT" && id) {
+    const t = await request.json();
+    await db
+      .prepare(
+        `INSERT INTO threads (id, a, b, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           a=excluded.a, b=excluded.b, updated_at=excluded.updated_at`
+      )
+      .bind(
+        id,
+        String(t.a ?? ""),
+        String(t.b ?? ""),
+        Date.now()
+      )
+      .run();
+    return json({ ok: true });
+  }
+
+  // DELETE /api/threads/{id}
+  if (method === "DELETE" && id) {
+    await db.prepare("DELETE FROM threads WHERE id = ?").bind(id).run();
     return json({ ok: true });
   }
 
