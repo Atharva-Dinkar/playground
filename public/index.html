@@ -49,7 +49,6 @@
   }
   .count { font-size: 13px; color: var(--ui-muted); }
   .status { font-size: 13px; color: #e8a44d; margin-left: 4px; }
-  .hint { font-size: 13px; color: var(--ui-muted); margin-left: auto; }
 
   .board {
     position: absolute;
@@ -99,6 +98,20 @@
     opacity: 0.45;
     pointer-events: none;
   }
+  /* the top sheet tears up briefly as a note is peeled off */
+  @keyframes pad-tear {
+    0%   { transform: rotate(-1deg) translateY(0); }
+    45%  { transform: rotate(-9deg) translateY(-7px); }
+    100% { transform: rotate(-1deg) translateY(0); }
+  }
+  .pad.tore .pad-sheet.s1 { animation: pad-tear 0.26s ease; }
+
+  /* a freshly peeled note unfurls from its top-right (pad) corner */
+  @keyframes peel-off {
+    from { clip-path: polygon(100% 0, 100% 0, 100% 0, 100% 0); filter: brightness(1.12); }
+    to   { clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); filter: brightness(1); }
+  }
+  .note.peeling { animation: peel-off 0.26s ease-out; }
 
   /* thread overlay — drawn over the notes; only the strings take pointer events */
   .threads {
@@ -185,27 +198,17 @@
     border-radius: 50%;
     background: radial-gradient(circle at 35% 30%, #ff9a8b, #d6453a 70%);
     box-shadow: 0 2px 3px rgba(0,0,0,0.35);
-  }
-
-  /* connector handle — appears on the selected note; drag it to another note */
-  .link-handle {
-    position: absolute;
-    top: 50%;
-    right: -10px;
-    width: 18px; height: 18px;
-    margin-top: -9px;
-    display: none;
-    padding: 0;
-    border: 2px solid #fff;
-    border-radius: 50%;
-    background: var(--thread);
-    box-shadow: 0 2px 4px rgba(0,0,0,0.35);
     cursor: crosshair;
-    touch-action: none;
+    transition: transform 0.12s ease;
   }
-  .note.selected .link-handle { display: block; }
-  .link-handle:hover { filter: brightness(1.08); }
-  .link-handle:focus-visible { outline: 2px solid var(--thread); outline-offset: 2px; }
+  /* enlarge the pin's clickable area so it's easy to grab */
+  .pin::before {
+    content: "";
+    position: absolute;
+    inset: -8px;
+    border-radius: 50%;
+  }
+  .note:not(.editing) .pin:hover { transform: scale(1.18); }
 
   /* ---- title (first line, always shown) ---- */
   .note .title {
@@ -306,7 +309,8 @@
   .tool-del svg { width: 15px; height: 15px; }
 
   @media (prefers-reduced-motion: reduce) {
-    .note, .pad-sheet { transition: none; }
+    .note, .pad-sheet, .pin { transition: none; }
+    .note.peeling, .pad.tore .pad-sheet.s1 { animation: none; }
   }
 </style>
 </head>
@@ -315,7 +319,6 @@
     <h1>Sticky Board</h1>
     <span class="count" id="count"></span>
     <span class="status" id="status"></span>
-    <span class="hint">Peel a note from the pad ↗</span>
   </div>
 
   <div class="board" id="board">
@@ -453,6 +456,7 @@
 
     const pin = document.createElement("div");
     pin.className = "pin";
+    pin.title = "Drag to another note to connect";
     el.appendChild(pin);
 
     const tb = document.createElement("div");
@@ -493,13 +497,6 @@
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
     tb.appendChild(del);
     el.appendChild(tb);
-
-    // connector handle (drag from here to another note)
-    const handle = document.createElement("button");
-    handle.className = "link-handle";
-    handle.setAttribute("aria-label", "Connect to another note");
-    handle.title = "Drag to another note to connect";
-    el.appendChild(handle);
 
     const title = document.createElement("div");
     title.className = "title";
@@ -642,6 +639,15 @@
   }
 
   /* ---------- peel a fresh note from the pad ---------- */
+  function triggerPadTear() {
+    const s1 = pad.querySelector(".pad-sheet.s1");
+    if (!s1) return;
+    pad.classList.remove("tore");
+    void pad.offsetWidth; // restart the animation if peeling rapidly
+    pad.classList.add("tore");
+    s1.addEventListener("animationend", function () { pad.classList.remove("tore"); }, { once: true });
+  }
+
   function peelNote(e) {
     e.preventDefault();
     const r = board.getBoundingClientRect();
@@ -649,6 +655,12 @@
     const n = made.n, el = made.el;
     select(n.id);
     bringToFront(n, el);
+
+    // peel visuals: the note unfurls, the pad's top sheet tears up
+    el.classList.add("peeling");
+    el.addEventListener("animationend", function () { el.classList.remove("peeling"); }, { once: true });
+    triggerPadTear();
+
     // hand it straight to the drag machinery so it follows the pointer
     try { el.setPointerCapture(e.pointerId); } catch (_) {}
     el.classList.add("dragging");
@@ -860,8 +872,8 @@
     const n = notes.find(x => x.id === id);
     if (!n) return;
 
-    // connector handle -> start a linking drag
-    if (e.target.closest(".link-handle")) {
+    // pin -> start a thread; clicking anywhere else on the note moves it
+    if (e.target.closest(".pin")) {
       select(id);
       bringToFront(n, el);
       startLink(n, e);
