@@ -18,6 +18,7 @@
     --ui-muted: #9b958c;
     --thread: #d6453a;
     --note-size: 150px;
+    --note-h: 60px;   /* a resting (collapsed) note's height — used to size the pad */
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -68,7 +69,7 @@
   .pad {
     position: absolute;
     top: 16px; right: 16px;
-    width: var(--note-size); height: var(--note-size);
+    width: var(--note-size); height: var(--note-h);
     z-index: 6;
     cursor: grab;
     touch-action: none;
@@ -92,7 +93,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 40px;
+    font-size: 26px;
     font-weight: 500;
     color: #2a2730;
     opacity: 0.4;
@@ -104,7 +105,7 @@
     45%  { transform: rotate(-9deg) translateY(-7px); }
     100% { transform: rotate(-1deg) translateY(0); }
   }
-  .pad.tore .pad-sheet.s1 { animation: pad-tear 0.26s ease; }
+  .pad.tore .pad-sheet.s1 { animation: pad-tear 0.3s ease; }
 
   /* a freshly peeled note unfurls from its top-right (pad) corner */
   @keyframes peel-off {
@@ -112,6 +113,35 @@
     to   { clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); filter: brightness(1); }
   }
   .note.peeling { animation: peel-off 0.26s ease-out; }
+
+  /* the visible "peel": a sheet hinges up off the pad as the note is pulled away */
+  .peel-ghost {
+    position: absolute;
+    top: 16px; right: 16px;
+    width: var(--note-size); height: var(--note-h);
+    border-radius: 2px;
+    background: var(--c, #fce98a);
+    box-shadow: 0 1px 1px rgba(0,0,0,0.18), 0 10px 20px rgba(0,0,0,0.30);
+    transform-origin: bottom center;
+    pointer-events: none;
+    z-index: 99999;
+    will-change: transform, opacity;
+    animation: peel-ghost 0.42s ease-in forwards;
+  }
+  /* a soft highlight along the lifting edge, for a paper-curl feel */
+  .peel-ghost::after {
+    content: "";
+    position: absolute;
+    left: 0; right: 0; top: 0;
+    height: 45%;
+    border-radius: 2px 2px 0 0;
+    background: linear-gradient(to bottom, rgba(255,255,255,0.5), rgba(255,255,255,0));
+  }
+  @keyframes peel-ghost {
+    0%   { transform: perspective(700px) rotateX(0deg) translateY(0) scale(1); opacity: 1; }
+    55%  { transform: perspective(700px) rotateX(-62deg) translateY(-16px) scale(1.03); opacity: 1; }
+    100% { transform: perspective(700px) rotateX(-105deg) translateY(-50px) scale(1.05); opacity: 0; }
+  }
 
   /* thread overlay — drawn over the notes; only the strings take pointer events */
   .threads {
@@ -311,6 +341,7 @@
   @media (prefers-reduced-motion: reduce) {
     .note, .pad-sheet, .pin { transition: none; }
     .note.peeling, .pad.tore .pad-sheet.s1 { animation: none; }
+    .peel-ghost { animation: none; opacity: 0; }
   }
 </style>
 </head>
@@ -656,6 +687,16 @@
     try { pad.setPointerCapture(e.pointerId); } catch (_) {}
   }
 
+  // a torn sheet that hinges up off the pad — the visible "peel"
+  function spawnPeelGhost(color) {
+    const g = document.createElement("div");
+    g.className = "peel-ghost";
+    g.style.setProperty("--c", color);
+    board.appendChild(g);
+    g.addEventListener("animationend", function () { g.remove(); }, { once: true });
+    setTimeout(function () { if (g.isConnected) g.remove(); }, 600); // fallback (e.g. reduced motion)
+  }
+
   // a note peels off (at the press point) and is handed to the drag machinery
   function beginPeeledNote(e, startX, startY) {
     const r = board.getBoundingClientRect();
@@ -664,7 +705,8 @@
     select(n.id);
     bringToFront(n, el);
 
-    // peel visuals: the note unfurls, the pad's top sheet tears up
+    // peel visuals: a sheet hinges up off the pad, the note unfurls, the pad tears
+    spawnPeelGhost(n.color);
     el.classList.add("peeling");
     el.addEventListener("animationend", function () { el.classList.remove("peeling"); }, { once: true });
     triggerPadTear();
