@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="theme-color" content="#26242c" />
+<title>Sticky Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600;700&family=Inter:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --board-bg: #26242c;
+    --board-dot: rgba(255, 255, 255, 0.06);
+    --bar-bg: #1d1b22;
+    --ink: #4a4744;
+    --ui-text: #e7e3da;
+    --ui-muted: #9b958c;
+    --note-size: 200px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    font-family: 'Inter', system-ui, sans-serif;
+    background: var(--board-bg);
+    color: var(--ui-text);
+  }
+
+  /* ---- top bar ---- */
+  .bar {
+    height: 60px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 20px;
+    background: var(--bar-bg);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    position: relative;
+    z-index: 10;
+  }
+  .bar h1 {
+    font-family: 'Caveat', cursive;
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+  }
+  .count {
+    font-size: 13px;
+    color: var(--ui-muted);
+    margin-right: auto;
+  }
+  .add-btn {
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    font-weight: 500;
+    color: #2a2730;
+    background: #fce98a;
+    border: none;
+    border-radius: 8px;
+    padding: 9px 16px;
+    cursor: pointer;
+    transition: transform 0.12s ease, filter 0.12s ease;
+  }
+  .add-btn:hover { filter: brightness(1.05); }
+  .add-btn:active { transform: scale(0.96); }
+  .add-btn:focus-visible { outline: 2px solid #fce98a; outline-offset: 2px; }
+
+  /* ---- board ---- */
+  .board {
+    position: absolute;
+    inset: 60px 0 0 0;
+    background-color: var(--board-bg);
+    background-image: radial-gradient(var(--board-dot) 1.4px, transparent 1.4px);
+    background-size: 26px 26px;
+    overflow: hidden;
+    touch-action: none;
+  }
+
+  .empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    color: var(--ui-muted);
+    pointer-events: none;
+    text-align: center;
+    padding: 24px;
+  }
+  .empty .big { font-family: 'Caveat', cursive; font-size: 32px; color: #6f6a62; }
+  .empty .small { font-size: 14px; }
+
+  /* ---- a note ---- */
+  .note {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: var(--note-size);
+    min-height: var(--note-size);
+    background: var(--c, #fce98a);
+    padding: 22px 18px 18px;
+    cursor: grab;
+    box-shadow: 0 1px 1px rgba(0,0,0,0.18), 0 8px 16px rgba(0,0,0,0.28);
+    border-radius: 2px;
+    transition: box-shadow 0.15s ease;
+    will-change: transform;
+    display: flex;
+    flex-direction: column;
+  }
+  .note::after {
+    /* subtle peeled-corner shadow */
+    content: "";
+    position: absolute;
+    right: 0; bottom: 0;
+    width: 38px; height: 38px;
+    background: linear-gradient(135deg, transparent 50%, rgba(0,0,0,0.10) 50%);
+    border-bottom-right-radius: 2px;
+  }
+  .note.dragging {
+    cursor: grabbing;
+    box-shadow: 0 6px 8px rgba(0,0,0,0.22), 0 22px 40px rgba(0,0,0,0.40);
+  }
+  .note.editing { cursor: text; }
+
+  .pin {
+    position: absolute;
+    top: -7px;
+    left: 50%;
+    width: 15px; height: 15px;
+    margin-left: -7.5px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #ff9a8b, #d6453a 70%);
+    box-shadow: 0 2px 3px rgba(0,0,0,0.35);
+  }
+
+  .note textarea {
+    flex: 1;
+    width: 100%;
+    border: none;
+    outline: none;
+    resize: none;
+    background: transparent;
+    font-family: 'Caveat', cursive;
+    font-size: 22px;
+    line-height: 1.3;
+    color: var(--ink);
+    overflow: hidden;
+    cursor: inherit;
+  }
+  .note textarea[readonly] { pointer-events: none; }
+  .note textarea::placeholder { color: rgba(74,71,68,0.45); }
+
+  /* ---- per-note toolbar ---- */
+  .toolbar {
+    position: absolute;
+    top: -42px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    background: #2f2c36;
+    border-radius: 20px;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.35);
+    white-space: nowrap;
+  }
+  .note.selected .toolbar { display: flex; }
+  .swatch {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    padding: 0;
+  }
+  .swatch.active { border-color: #fff; }
+  .swatch:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+  .tool-del {
+    width: 26px; height: 26px;
+    margin-left: 2px;
+    display: flex; align-items: center; justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: 50%;
+    color: #d89c9c;
+    cursor: pointer;
+  }
+  .tool-del:hover { background: rgba(214,69,58,0.2); color: #ff7a6c; }
+  .tool-del svg { width: 15px; height: 15px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .note, .add-btn { transition: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <h1>Sticky Board</h1>
+    <span class="count" id="count"></span>
+    <button class="add-btn" id="add">+ New note</button>
+  </div>
+
+  <div class="board" id="board">
+    <div class="empty" id="empty">
+      <div class="big">Nothing here yet</div>
+      <div class="small">Double-click anywhere, or hit “+ New note”.</div>
+    </div>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  const COLORS = ["#fce98a", "#f7a8c0", "#a6d8f2", "#b7e4a0", "#fbc079", "#cbb6e8"];
+  const NOTE = 200;          // note width/height in px
+  const KEY  = "stickyboard:notes";
+
+  const board = document.getElementById("board");
+  const empty = document.getElementById("empty");
+  const countEl = document.getElementById("count");
+
+  let notes = [];            // [{id, text, color, x, y, rot, z}]
+  const els = new Map();     // id -> element
+  let maxZ = 1;
+  let selectedId = null;
+  let editingId = null;
+
+  /* ---------- storage: Claude artifact OR a real website ---------- */
+  const hasClaudeStore =
+    typeof window !== "undefined" &&
+    window.storage &&
+    typeof window.storage.get === "function";
+
+  const Store = {
+    async load() {
+      try {
+        if (hasClaudeStore) {
+          const r = await window.storage.get(KEY);
+          return r && r.value ? JSON.parse(r.value) : [];
+        }
+        const v = localStorage.getItem(KEY);
+        return v ? JSON.parse(v) : [];
+      } catch (e) { return []; }
+    },
+    async save() {
+      const data = JSON.stringify(notes);
+      try {
+        if (hasClaudeStore) await window.storage.set(KEY, data);
+        else localStorage.setItem(KEY, data);
+      } catch (e) { console.error("save failed", e); }
+    }
+  };
+
+  /* ---------- helpers ---------- */
+  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+
+  function clampNote(n) {
+    n.x = clamp(n.x, 0, Math.max(0, board.clientWidth  - NOTE));
+    n.y = clamp(n.y, 0, Math.max(0, board.clientHeight - NOTE));
+  }
+
+  function applyTransform(el, n, lift) {
+    const rot = lift ? n.rot * 0.35 : n.rot;
+    const scale = lift ? 1.05 : 1;
+    el.style.transform =
+      "translate(" + n.x + "px," + n.y + "px) rotate(" + rot + "deg) scale(" + scale + ")";
+  }
+
+  function updateChrome() {
+    const n = notes.length;
+    countEl.textContent = n ? n + (n === 1 ? " note" : " notes") : "";
+    empty.style.display = n ? "none" : "flex";
+  }
+
+  /* ---------- build a note element ---------- */
+  function makeEl(n) {
+    const el = document.createElement("div");
+    el.className = "note";
+    el.dataset.id = n.id;
+    el.style.setProperty("--c", n.color);
+    el.style.zIndex = n.z;
+    applyTransform(el, n, false);
+
+    const pin = document.createElement("div");
+    pin.className = "pin";
+    el.appendChild(pin);
+
+    // toolbar
+    const tb = document.createElement("div");
+    tb.className = "toolbar";
+    COLORS.forEach(function (c) {
+      const s = document.createElement("button");
+      s.className = "swatch" + (c === n.color ? " active" : "");
+      s.style.background = c;
+      s.dataset.color = c;
+      s.setAttribute("aria-label", "Set colour");
+      tb.appendChild(s);
+    });
+    const del = document.createElement("button");
+    del.className = "tool-del";
+    del.setAttribute("aria-label", "Delete note");
+    del.innerHTML =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
+    tb.appendChild(del);
+    el.appendChild(tb);
+
+    // text
+    const ta = document.createElement("textarea");
+    ta.value = n.text;
+    ta.readOnly = true;
+    ta.placeholder = "Write a task…";
+    ta.setAttribute("aria-label", "Note text");
+    el.appendChild(ta);
+
+    autoGrow(ta);
+    board.appendChild(el);
+    els.set(n.id, el);
+    return el;
+  }
+
+  function autoGrow(ta) {
+    ta.style.height = "auto";
+    ta.style.height = Math.max(140, ta.scrollHeight) + "px";
+  }
+
+  /* ---------- selection ---------- */
+  function select(id) {
+    if (selectedId && els.has(selectedId)) els.get(selectedId).classList.remove("selected");
+    selectedId = id;
+    if (id && els.has(id)) els.get(id).classList.add("selected");
+  }
+
+  function bringToFront(n, el) {
+    n.z = ++maxZ;
+    el.style.zIndex = n.z;
+  }
+
+  /* ---------- editing ---------- */
+  function startEdit(n, el) {
+    editingId = n.id;
+    el.classList.add("editing");
+    const ta = el.querySelector("textarea");
+    ta.readOnly = false;
+    ta.focus();
+    const len = ta.value.length;
+    ta.setSelectionRange(len, len);
+  }
+  function stopEdit() {
+    if (!editingId) return;
+    const el = els.get(editingId);
+    if (el) {
+      const ta = el.querySelector("textarea");
+      ta.readOnly = true;
+      el.classList.remove("editing");
+      const n = notes.find(x => x.id === editingId);
+      if (n) { n.text = ta.value; Store.save(); }
+    }
+    editingId = null;
+  }
+
+  /* ---------- create / delete / colour ---------- */
+  function addNote(x, y) {
+    const id = uid();
+    const n = {
+      id: id,
+      text: "",
+      color: COLORS[Math.floor(Math.random() * COLORS.length)],
+      x: (x == null ? board.clientWidth / 2 - NOTE / 2 + (Math.random() * 60 - 30) : x - NOTE / 2),
+      y: (y == null ? board.clientHeight / 2 - NOTE / 2 + (Math.random() * 60 - 30) : y - NOTE / 2),
+      rot: Math.random() * 8 - 4,
+      z: ++maxZ
+    };
+    clampNote(n);
+    notes.push(n);
+    const el = makeEl(n);
+    select(id);
+    startEdit(n, el);
+    updateChrome();
+    Store.save();
+  }
+
+  function deleteNote(id) {
+    const i = notes.findIndex(x => x.id === id);
+    if (i === -1) return;
+    notes.splice(i, 1);
+    const el = els.get(id);
+    if (el) el.remove();
+    els.delete(id);
+    if (selectedId === id) selectedId = null;
+    if (editingId === id) editingId = null;
+    updateChrome();
+    Store.save();
+  }
+
+  function recolor(n, el, color) {
+    n.color = color;
+    el.style.setProperty("--c", color);
+    el.querySelectorAll(".swatch").forEach(function (s) {
+      s.classList.toggle("active", s.dataset.color === color);
+    });
+    Store.save();
+  }
+
+  /* ---------- drag (pointer events: mouse + touch) ---------- */
+  let drag = null; // {id, el, n, offX, offY, moved}
+
+  board.addEventListener("pointerdown", function (e) {
+    const el = e.target.closest(".note");
+
+    // clicked empty board -> deselect
+    if (!el) { select(null); stopEdit(); return; }
+
+    const id = el.dataset.id;
+    const n = notes.find(x => x.id === id);
+    if (!n) return;
+
+    // toolbar interactions
+    const swatch = e.target.closest(".swatch");
+    if (swatch) { recolor(n, el, swatch.dataset.color); return; }
+    if (e.target.closest(".tool-del")) { deleteNote(id); return; }
+
+    select(id);
+    bringToFront(n, el);
+
+    // if we're editing this note, let the textarea handle the pointer
+    if (editingId === id) return;
+
+    e.preventDefault();
+    el.setPointerCapture(e.pointerId);
+    el.classList.add("dragging");
+    applyTransform(el, n, true);
+    drag = { id: id, el: el, n: n, startX: e.clientX, startY: e.clientY, baseX: n.x, baseY: n.y, moved: false };
+  });
+
+  board.addEventListener("pointermove", function (e) {
+    if (!drag) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true;
+    drag.n.x = drag.baseX + dx;
+    drag.n.y = drag.baseY + dy;
+    clampNote(drag.n);
+    applyTransform(drag.el, drag.n, true);
+  });
+
+  function endDrag(e) {
+    if (!drag) return;
+    const d = drag; drag = null;
+    d.el.classList.remove("dragging");
+    applyTransform(d.el, d.n, false);
+    try { d.el.releasePointerCapture(e.pointerId); } catch (_) {}
+    if (d.moved) Store.save();
+  }
+  board.addEventListener("pointerup", endDrag);
+  board.addEventListener("pointercancel", endDrag);
+
+  /* ---------- editing triggers ---------- */
+  board.addEventListener("dblclick", function (e) {
+    const el = e.target.closest(".note");
+    if (el) {
+      const n = notes.find(x => x.id === el.dataset.id);
+      if (n) startEdit(n, el);
+    } else {
+      // double-click empty board -> new note here
+      const r = board.getBoundingClientRect();
+      addNote(e.clientX - r.left, e.clientY - r.top);
+    }
+  });
+
+  board.addEventListener("input", function (e) {
+    if (e.target.tagName === "TEXTAREA") autoGrow(e.target);
+  });
+
+  board.addEventListener("focusout", function (e) {
+    if (e.target.tagName === "TEXTAREA") stopEdit();
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && editingId) { stopEdit(); }
+    // delete selected note with Delete/Backspace when not editing
+    if ((e.key === "Delete" || e.key === "Backspace") && selectedId && !editingId) {
+      e.preventDefault();
+      deleteNote(selectedId);
+    }
+  });
+
+  document.getElementById("add").addEventListener("click", function () { addNote(); });
+
+  // keep notes on-screen if the window resizes
+  window.addEventListener("resize", function () {
+    notes.forEach(function (n) {
+      clampNote(n);
+      const el = els.get(n.id);
+      if (el && (!drag || drag.id !== n.id)) applyTransform(el, n, false);
+    });
+  });
+
+  /* ---------- init ---------- */
+  (async function init() {
+    notes = await Store.load();
+    maxZ = notes.reduce((m, n) => Math.max(m, n.z || 1), 1);
+    notes.forEach(function (n) {
+      if (typeof n.rot !== "number") n.rot = Math.random() * 8 - 4;
+      clampNote(n);
+      makeEl(n);
+    });
+    updateChrome();
+  })();
+})();
+</script>
+</body>
+</html>
