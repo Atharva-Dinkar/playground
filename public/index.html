@@ -48,24 +48,8 @@
     letter-spacing: 0.5px;
   }
   .count { font-size: 13px; color: var(--ui-muted); }
-  .status { font-size: 13px; color: #e8a44d; margin-right: auto; }
-  .count + .status { margin-left: 4px; }
-  .spacer { margin-right: auto; }
-  .add-btn {
-    font-family: 'Inter', sans-serif;
-    font-size: 14px;
-    font-weight: 500;
-    color: #2a2730;
-    background: #fce98a;
-    border: none;
-    border-radius: 8px;
-    padding: 9px 16px;
-    cursor: pointer;
-    transition: transform 0.12s ease, filter 0.12s ease;
-  }
-  .add-btn:hover { filter: brightness(1.05); }
-  .add-btn:active { transform: scale(0.96); }
-  .add-btn:focus-visible { outline: 2px solid #fce98a; outline-offset: 2px; }
+  .status { font-size: 13px; color: #e8a44d; margin-left: 4px; }
+  .hint { font-size: 13px; color: var(--ui-muted); margin-left: auto; }
 
   .board {
     position: absolute;
@@ -77,8 +61,44 @@
     touch-action: none;
   }
   .board.linking { cursor: crosshair; }
+  .board.pulling { cursor: grabbing; }
   /* while dragging a new string, don't let existing strings steal the drop */
   .board.linking .thread-hit { pointer-events: none; }
+
+  /* ---- the pad you peel notes from ---- */
+  .pad {
+    position: absolute;
+    top: 16px; right: 16px;
+    width: 74px; height: 74px;
+    z-index: 6;
+    cursor: grab;
+    touch-action: none;
+  }
+  .pad:active { cursor: grabbing; }
+  .pad-sheet {
+    position: absolute;
+    inset: 0;
+    border-radius: 2px;
+    background: #fce98a;
+    box-shadow: 0 1px 1px rgba(0,0,0,0.18), 0 6px 12px rgba(0,0,0,0.28);
+    transition: transform 0.12s ease;
+  }
+  .pad-sheet.s1 { transform: rotate(-1deg); }
+  .pad-sheet.s2 { transform: rotate(3deg) translate(2px, 1px); background: #fbe07a; z-index: -1; }
+  .pad-sheet.s3 { transform: rotate(-5deg) translate(-2px, 2px); background: #f7d96a; z-index: -2; }
+  .pad:hover .pad-sheet.s1 { transform: rotate(-1deg) translateY(-3px); }
+  .pad-plus {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26px;
+    font-weight: 500;
+    color: #2a2730;
+    opacity: 0.45;
+    pointer-events: none;
+  }
 
   /* thread overlay — drawn over the notes; only the strings take pointer events */
   .threads {
@@ -104,9 +124,9 @@
     stroke-width: 14;
     stroke-linecap: round;
     pointer-events: stroke;
-    cursor: pointer;
+    cursor: grab;
   }
-  .thread-hit:hover + .thread { stroke-width: 3.5; opacity: 1; }
+  .thread-hit:hover + .thread { stroke-width: 3; opacity: 1; }
   .thread-temp { opacity: 0.9; stroke-dasharray: 4 6; }
 
   .empty {
@@ -260,6 +280,18 @@
   }
   .swatch.active { border-color: #fff; }
   .swatch:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+  .tool-sep { width: 1px; height: 18px; background: rgba(255,255,255,0.16); margin: 0 2px; }
+  .tool-z {
+    width: 26px; height: 26px;
+    display: flex; align-items: center; justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: 50%;
+    color: #cfc9bf;
+    cursor: pointer;
+  }
+  .tool-z:hover { background: rgba(255,255,255,0.12); color: #fff; }
+  .tool-z svg { width: 15px; height: 15px; }
   .tool-del {
     width: 26px; height: 26px;
     margin-left: 2px;
@@ -274,7 +306,7 @@
   .tool-del svg { width: 15px; height: 15px; }
 
   @media (prefers-reduced-motion: reduce) {
-    .note, .add-btn { transition: none; }
+    .note, .pad-sheet { transition: none; }
   }
 </style>
 </head>
@@ -283,15 +315,22 @@
     <h1>Sticky Board</h1>
     <span class="count" id="count"></span>
     <span class="status" id="status"></span>
-    <span class="spacer"></span>
-    <button class="add-btn" id="add">+ New note</button>
+    <span class="hint">Peel a note from the pad ↗</span>
   </div>
 
   <div class="board" id="board">
     <svg class="threads" id="threads" aria-hidden="true"></svg>
+
+    <div class="pad" id="pad" title="Peel a note onto the board" role="button" aria-label="Peel a new note">
+      <span class="pad-sheet s3"></span>
+      <span class="pad-sheet s2"></span>
+      <span class="pad-sheet s1"></span>
+      <span class="pad-plus">+</span>
+    </div>
+
     <div class="empty" id="empty">
       <div class="big">Nothing here yet</div>
-      <div class="small">Double-click anywhere, or hit “+ New note”.</div>
+      <div class="small">Double-click anywhere, or peel one from the pad.</div>
     </div>
   </div>
 
@@ -302,12 +341,14 @@
   const COLORS = ["#fce98a", "#f7a8c0", "#a6d8f2", "#b7e4a0", "#fbc079", "#cbb6e8"];
   const NOTE = 150;
   const SVGNS = "http://www.w3.org/2000/svg";
+  const BREAK_PULL = 120; // how far you must pull a string before it snaps
 
   const board = document.getElementById("board");
   const empty = document.getElementById("empty");
   const countEl = document.getElementById("count");
   const statusEl = document.getElementById("status");
   const threadSvg = document.getElementById("threads");
+  const pad = document.getElementById("pad");
 
   let notes = [];              // [{id, text, color, x, y, rot, z}]
   let threads = [];            // [{id, a, b}]
@@ -317,10 +358,11 @@
   let selectedId = null;
   let editingId = null;
 
-  let drag = null;             // note drag: {id, el, n, ...}
+  let drag = null;             // note drag: {id, el, n, ..., isNew}
   let link = null;             // linking drag: {fromId, pointerId}
   let linkTarget = null;       // note id currently hovered as a link target
   let linkTempEl = null;       // temporary <path> shown while dragging a string
+  let pull = null;             // pulling a string to break it: {id, pointerId}
 
   /* ---------- storage: the Worker + D1 API ---------- */
   let statusTimer = null;
@@ -423,6 +465,27 @@
       s.setAttribute("aria-label", "Set colour");
       tb.appendChild(s);
     });
+
+    const sep = document.createElement("span");
+    sep.className = "tool-sep";
+    tb.appendChild(sep);
+
+    const back = document.createElement("button");
+    back.className = "tool-z tool-back";
+    back.setAttribute("aria-label", "Send to back");
+    back.title = "Send to back";
+    back.innerHTML =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v13M6 11l6 6 6-6"/></svg>';
+    tb.appendChild(back);
+
+    const front = document.createElement("button");
+    front.className = "tool-z tool-front";
+    front.setAttribute("aria-label", "Bring to front");
+    front.title = "Bring to front";
+    front.innerHTML =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V7M6 13l6-6 6 6"/></svg>';
+    tb.appendChild(front);
+
     const del = document.createElement("button");
     del.className = "tool-del";
     del.setAttribute("aria-label", "Delete note");
@@ -493,6 +556,13 @@
     el.style.zIndex = n.z;
   }
 
+  function sendToBack(n, el) {
+    const minZ = notes.reduce((m, x) => Math.min(m, x.z || 1), maxZ);
+    n.z = minZ - 1;
+    el.style.zIndex = n.z;
+    API.upsert(n);
+  }
+
   /* ---------- editing ---------- */
   function startEdit(n, el) {
     editingId = n.id;
@@ -518,24 +588,29 @@
   }
 
   /* ---------- create / delete / colour ---------- */
-  function addNote(x, y) {
-    const id = uid();
+  function makeNote(x, y) {
     const n = {
-      id: id,
+      id: uid(),
       text: "",
       color: COLORS[Math.floor(Math.random() * COLORS.length)],
-      x: (x == null ? board.clientWidth / 2 - NOTE / 2 + (Math.random() * 60 - 30) : x - NOTE / 2),
-      y: (y == null ? board.clientHeight / 2 - NOTE / 2 + (Math.random() * 60 - 30) : y - NOTE / 2),
+      x: x,
+      y: y,
       rot: Math.random() * 8 - 4,
       z: ++maxZ
     };
     clampNote(n);
     notes.push(n);
     const el = makeEl(n);
-    select(id);
-    startEdit(n, el);
     updateChrome();
     API.upsert(n);
+    return { n: n, el: el };
+  }
+
+  // double-click on empty board -> drop a note there and edit it
+  function addNoteAt(cx, cy) {
+    const made = makeNote(cx - NOTE / 2, cy - NOTE / 2);
+    select(made.n.id);
+    startEdit(made.n, made.el);
   }
 
   function deleteNote(id) {
@@ -566,6 +641,21 @@
     API.upsert(n);
   }
 
+  /* ---------- peel a fresh note from the pad ---------- */
+  function peelNote(e) {
+    e.preventDefault();
+    const r = board.getBoundingClientRect();
+    const made = makeNote(e.clientX - r.left - NOTE / 2, e.clientY - r.top - NOTE / 2);
+    const n = made.n, el = made.el;
+    select(n.id);
+    bringToFront(n, el);
+    // hand it straight to the drag machinery so it follows the pointer
+    try { el.setPointerCapture(e.pointerId); } catch (_) {}
+    el.classList.add("dragging");
+    applyTransform(el, n, true);
+    drag = { id: n.id, el: el, n: n, startX: e.clientX, startY: e.clientY, baseX: n.x, baseY: n.y, moved: false, isNew: true };
+  }
+
   /* ---------- threads ---------- */
   function anchor(n) {
     // tie the string to the pin: top-centre of the note (height-independent)
@@ -581,6 +671,13 @@
     return "M " + ax + " " + ay + " Q " + mx + " " + my + " " + bx + " " + by;
   }
 
+  // a quadratic whose curve passes through point P at its midpoint (for pulling)
+  function curveThrough(ax, ay, bx, by, px, py) {
+    const cx = 2 * px - (ax + bx) / 2;
+    const cy = 2 * py - (ay + by) / 2;
+    return "M " + ax + " " + ay + " Q " + cx + " " + cy + " " + bx + " " + by;
+  }
+
   function findThreadBetween(a, b) {
     return threads.find(function (t) {
       return (t.a === a && t.b === b) || (t.a === b && t.b === a);
@@ -592,7 +689,7 @@
     hit.setAttribute("class", "thread-hit");
     hit.dataset.threadId = t.id;
     const tip = document.createElementNS(SVGNS, "title");
-    tip.textContent = "Click to remove";
+    tip.textContent = "Pull to break";
     hit.appendChild(tip);
 
     const vis = document.createElementNS(SVGNS, "path");
@@ -616,6 +713,8 @@
     const d = curve(a.x, a.y, b.x, b.y);
     pair.hit.setAttribute("d", d);
     pair.vis.setAttribute("d", d);
+    pair.vis.style.opacity = "";
+    pair.vis.style.strokeWidth = "";
   }
 
   function positionAllThreads() {
@@ -645,12 +744,56 @@
     if (alsoRemote) API.removeThread(id);
   }
 
-  // click a string to remove it
-  threadSvg.addEventListener("click", function (e) {
-    const hit = e.target.closest && e.target.closest(".thread-hit");
-    if (!hit) return;
-    removeThreadLocal(hit.dataset.threadId, true);
-  });
+  /* ---------- pulling a string to break it ---------- */
+  function startPull(id, e) {
+    const t = threads.find(x => x.id === id);
+    if (!t) return;
+    e.preventDefault();
+    pull = { id: id, pointerId: e.pointerId };
+    board.classList.add("pulling");
+    try { board.setPointerCapture(e.pointerId); } catch (_) {}
+    updatePull(e);
+  }
+
+  function updatePull(e) {
+    const t = threads.find(x => x.id === pull.id);
+    const pair = threadEls.get(pull.id);
+    if (!t || !pair) return;
+    const na = notes.find(x => x.id === t.a);
+    const nb = notes.find(x => x.id === t.b);
+    if (!na || !nb) return;
+    const a = anchor(na), b = anchor(nb);
+    const r = board.getBoundingClientRect();
+    const px = e.clientX - r.left;
+    const py = e.clientY - r.top;
+
+    const d = curveThrough(a.x, a.y, b.x, b.y, px, py);
+    pair.hit.setAttribute("d", d);
+    pair.vis.setAttribute("d", d);
+
+    // how far have we pulled the string off its resting midpoint?
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const stretch = Math.hypot(px - mx, py - my);
+    const tension = clamp(stretch / BREAK_PULL, 0, 1);
+    pair.vis.style.opacity = String(0.85 + 0.15 * tension);
+    pair.vis.style.strokeWidth = String(2 - tension * 0.9); // thins as it stretches
+
+    if (stretch > BREAK_PULL) finishPull(true);
+  }
+
+  function finishPull(broke) {
+    const id = pull.id;
+    try { board.releasePointerCapture(pull.pointerId); } catch (_) {}
+    board.classList.remove("pulling");
+    pull = null;
+    if (broke) {
+      removeThreadLocal(id, true);
+      return;
+    }
+    // released early -> spring back to rest
+    const t = threads.find(x => x.id === id);
+    if (t) positionThread(t);
+  }
 
   /* ---------- linking: drag the handle onto another note ---------- */
   function startLink(n, e) {
@@ -701,6 +844,13 @@
 
   /* ---------- pointer interactions ---------- */
   board.addEventListener("pointerdown", function (e) {
+    // pull a string to break it
+    const hit = e.target.closest && e.target.closest(".thread-hit");
+    if (hit) { startPull(hit.dataset.threadId, e); return; }
+
+    // peel a fresh note from the pad
+    if (e.target.closest(".pad")) { peelNote(e); return; }
+
     const el = e.target.closest(".note");
 
     // clicked empty board -> deselect
@@ -718,8 +868,11 @@
       return;
     }
 
+    // toolbar actions
     const swatch = e.target.closest(".swatch");
     if (swatch) { recolor(n, el, swatch.dataset.color); return; }
+    if (e.target.closest(".tool-front")) { bringToFront(n, el); API.upsert(n); return; }
+    if (e.target.closest(".tool-back")) { sendToBack(n, el); return; }
     if (e.target.closest(".tool-del")) { deleteNote(id); return; }
 
     select(id);
@@ -731,10 +884,11 @@
     el.setPointerCapture(e.pointerId);
     el.classList.add("dragging");
     applyTransform(el, n, true);
-    drag = { id: id, el: el, n: n, startX: e.clientX, startY: e.clientY, baseX: n.x, baseY: n.y, moved: false };
+    drag = { id: id, el: el, n: n, startX: e.clientX, startY: e.clientY, baseX: n.x, baseY: n.y, moved: false, isNew: false };
   });
 
   board.addEventListener("pointermove", function (e) {
+    if (pull) { updatePull(e); return; }
     if (link) { updateLink(e); return; }
     if (!drag) return;
     const dx = e.clientX - drag.startX;
@@ -754,27 +908,34 @@
     applyTransform(d.el, d.n, false);
     positionThreadsFor(d.id);
     try { d.el.releasePointerCapture(e.pointerId); } catch (_) {}
-    if (d.moved) API.upsert(d.n);
+    if (d.moved || d.isNew) API.upsert(d.n);
+    if (d.isNew) {
+      const el = els.get(d.id);
+      if (el) startEdit(d.n, el); // a freshly peeled note opens for typing
+    }
   }
 
   board.addEventListener("pointerup", function (e) {
+    if (pull) { finishPull(false); return; }
     if (link) { endLink(); return; }
     endDrag(e);
   });
   board.addEventListener("pointercancel", function (e) {
+    if (pull) { finishPull(false); return; }
     if (link) { endLink(); return; }
     endDrag(e);
   });
 
   /* ---------- editing triggers ---------- */
   board.addEventListener("dblclick", function (e) {
+    if (e.target.closest(".pad")) return;
     const el = e.target.closest(".note");
     if (el) {
       const n = notes.find(x => x.id === el.dataset.id);
       if (n) { select(n.id); startEdit(n, el); }
     } else {
       const r = board.getBoundingClientRect();
-      addNote(e.clientX - r.left, e.clientY - r.top);
+      addNoteAt(e.clientX - r.left, e.clientY - r.top);
     }
   });
 
@@ -788,6 +949,7 @@
 
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape") {
+      if (pull) { finishPull(false); return; }            // give up the pull, keep the string
       if (link) { setLinkTarget(null); endLink(); return; } // cancel an in-progress string
       if (editingId) { stopEdit(); return; }
     }
@@ -796,8 +958,6 @@
       deleteNote(selectedId);
     }
   });
-
-  document.getElementById("add").addEventListener("click", function () { addNote(); });
 
   window.addEventListener("resize", function () {
     notes.forEach(function (n) {
