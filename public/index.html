@@ -99,39 +99,29 @@
     opacity: 0.4;
     pointer-events: none;
   }
-  /* an e-reader page turn: the peeled sheet is a 3D page hinged on its left
-     edge. It follows the pointer and its turn angle tracks how far you pull. */
-  .curl {
+  /* peeling a note: a sheet laid over the pad whose bottom-right corner curls
+     up (clip-paths set in JS). No 3D flip — it lifts off when you leave the pad. */
+  .peelpage {
     position: absolute;
     top: 16px; right: 16px;
     width: var(--note-size); height: var(--note-h);
-    z-index: 99999;
-    perspective: 1000px;
-    pointer-events: none;
-    will-change: transform;
-  }
-  .curl-inner {
-    position: absolute;
-    inset: 0;
-    transform-style: preserve-3d;
-    transform-origin: left center; /* hinge on the spine */
-    will-change: transform;
-  }
-  .curl-face {
-    position: absolute;
-    inset: 0;
-    border-radius: 2px;
-    backface-visibility: hidden;
-    box-shadow: 0 10px 22px rgba(0,0,0,0.32);
-  }
-  .curl-front {
     background: var(--c, #fce98a);
-    background-image: linear-gradient(to left, rgba(0,0,0,0) 55%, rgba(0,0,0,0.22)); /* fold shadow toward the hinge */
+    border-radius: 2px;
+    pointer-events: none;
+    z-index: 99990;
   }
-  .curl-back {
-    background: #efe7d6; /* the paper back */
-    transform: rotateY(180deg);
-    background-image: linear-gradient(to right, rgba(0,0,0,0) 55%, rgba(0,0,0,0.16));
+  /* the folded-over flap — same paper, shaded like an underside, casting a shadow */
+  .peelpage-fold {
+    position: absolute;
+    top: 16px; right: 16px;
+    width: var(--note-size); height: var(--note-h);
+    background:
+      linear-gradient(315deg, rgba(0,0,0,0.28), rgba(0,0,0,0) 45%),
+      linear-gradient(315deg, rgba(255,255,255,0.35) 4%, rgba(255,255,255,0) 26%),
+      var(--c, #fce98a);
+    filter: drop-shadow(-3px -3px 3px rgba(0,0,0,0.30));
+    pointer-events: none;
+    z-index: 99991;
   }
 
   /* thread overlay — drawn over the notes; only the strings take pointer events */
@@ -365,7 +355,8 @@
   const NOTE = 150;
   const SVGNS = "http://www.w3.org/2000/svg";
   const BREAK_PULL = 120; // how far you must pull a string before it snaps
-  const PEEL_COMMIT = 110; // how far you pull a page off the pad before it fully turns
+  const NOTE_H = 60;      // a resting note's height (matches --note-h), for curl geometry
+  const MAX_CURL = 44;    // largest the peeled corner curls while still on the pad
 
   const board = document.getElementById("board");
   const empty = document.getElementById("empty");
@@ -383,8 +374,7 @@
   let editingId = null;
 
   let drag = null;             // note drag: {id, el, n, ..., isNew}
-  let padPeel = null;          // armed peel: {pointerId, startX, startY}
-  let peelCurl = null;         // page-turn in progress: {pointerId, el, color, pendingNext, ...}
+  let peelCurl = null;         // corner-curl peel in progress: {pointerId, sheet, fold, color, pendingNext, ...}
   let nextColor = COLORS[0];   // colour shown on the pad = the next note's colour
   let link = null;             // linking drag: {fromId, pointerId}
   let linkTarget = null;       // note id currently hovered as a link target
@@ -662,66 +652,60 @@
     API.upsert(n);
   }
 
-  /* ---------- peel a fresh note from the pad (e-reader page turn) ---------- */
+  /* ---------- peel a fresh note from the pad (bottom-right corner curl) ---------- */
   function randomColor() { return COLORS[Math.floor(Math.random() * COLORS.length)]; }
 
   function setPadColor(c) { pad.style.setProperty("--c", c); }
 
-  // press the pad to arm a peel; the page only turns once you pull away
-  function armPeel(e) {
+  // shape the sheet (minus its curled corner) and the folded-over flap for curl size s
+  function setCurl(pc, s) {
+    const W = NOTE, H = NOTE_H;
+    pc.sheet.style.clipPath =
+      "polygon(0px 0px, " + W + "px 0px, " + W + "px " + (H - s) + "px, " +
+      (W - s) + "px " + H + "px, 0px " + H + "px)";
+    pc.fold.style.clipPath =
+      "polygon(" + (W - s) + "px " + H + "px, " + W + "px " + (H - s) + "px, " +
+      (W - s) + "px " + (H - s) + "px)";
+  }
+
+  // press the pad -> lay a sheet over it; its corner curls as you drag
+  function startPeel(e) {
     e.preventDefault();
-    padPeel = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY };
-    try { pad.setPointerCapture(e.pointerId); } catch (_) {}
-  }
+    const sheet = document.createElement("div");
+    sheet.className = "peelpage";
+    sheet.style.setProperty("--c", nextColor);
+    const fold = document.createElement("div");
+    fold.className = "peelpage-fold";
+    fold.style.setProperty("--c", nextColor);
+    board.appendChild(sheet);
+    board.appendChild(fold);
 
-  function cancelPeel() {
-    if (!padPeel) return;
-    try { pad.releasePointerCapture(padPeel.pointerId); } catch (_) {}
-    padPeel = null;
-  }
-
-  // build the 3D page pinned to the pad and start tracking the turn
-  function startCurl(e, startX, startY) {
-    const curl = document.createElement("div");
-    curl.className = "curl";
-    curl.style.setProperty("--c", nextColor);
-    const inner = document.createElement("div");
-    inner.className = "curl-inner";
-    const back = document.createElement("div");
-    back.className = "curl-face curl-back";
-    const front = document.createElement("div");
-    front.className = "curl-face curl-front";
-    inner.appendChild(back);
-    inner.appendChild(front);
-    curl.appendChild(inner);
-    board.appendChild(curl);
-
-    // reveal the NEXT note's colour on the pad, beneath the turning page
+    // the next note's colour sits on the pad, revealed under the lifting corner
     const pendingNext = randomColor();
     setPadColor(pendingNext);
 
-    peelCurl = { pointerId: e.pointerId, startX: startX, startY: startY, el: curl, inner: inner, color: nextColor, pendingNext: pendingNext };
-    try { board.setPointerCapture(e.pointerId); } catch (_) {}
-    updateCurl(e);
+    peelCurl = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, sheet: sheet, fold: fold, color: nextColor, pendingNext: pendingNext };
+    try { pad.setPointerCapture(e.pointerId); } catch (_) {}
+    setCurl(peelCurl, 0);
   }
 
-  // returns true once the page has fully turned and a real note takes over
-  function updateCurl(e) {
-    const dx = e.clientX - peelCurl.startX;
-    const dy = e.clientY - peelCurl.startY;
-    const dist = Math.hypot(dx, dy);
-    if (dist >= PEEL_COMMIT) { commitCurl(e); return true; }
-    const angle = (dist / PEEL_COMMIT) * 165;
-    peelCurl.el.style.transform = "translate(" + dx + "px," + dy + "px)";  // follow the pointer
-    peelCurl.inner.style.transform = "rotateY(" + angle + "deg)";          // turn the page
+  // returns true once the cursor has left the pad and a real note takes over
+  function updatePeel(e) {
+    const r = pad.getBoundingClientRect();
+    const off = e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+    if (off) { commitPeel(e); return true; }
+    const dist = Math.hypot(e.clientX - peelCurl.startX, e.clientY - peelCurl.startY);
+    setCurl(peelCurl, clamp(dist * 0.6, 0, MAX_CURL));
     return false;
   }
 
-  // the page is off the pad -> a real note takes over and follows the pointer
-  function commitCurl(e) {
+  // cursor left the pad -> the note comes off and follows the pointer
+  function commitPeel(e) {
     const color = peelCurl.color;
-    peelCurl.el.remove();
+    peelCurl.sheet.remove();
+    peelCurl.fold.remove();
     nextColor = peelCurl.pendingNext; // the pad already shows this colour
+    try { pad.releasePointerCapture(peelCurl.pointerId); } catch (_) {}
     peelCurl = null;
 
     const r = board.getBoundingClientRect();
@@ -735,12 +719,13 @@
     drag = { id: n.id, el: el, n: n, startX: e.clientX, startY: e.clientY, baseX: n.x, baseY: n.y, moved: true, isNew: true };
   }
 
-  // released before the page came off -> snap back, no note
-  function cancelCurl() {
+  // released while still on the pad -> flatten back, no note
+  function cancelPeel() {
     if (!peelCurl) return;
-    try { board.releasePointerCapture(peelCurl.pointerId); } catch (_) {}
+    try { pad.releasePointerCapture(peelCurl.pointerId); } catch (_) {}
     setPadColor(peelCurl.color); // restore the pad colour (nothing was peeled)
-    peelCurl.el.remove();
+    peelCurl.sheet.remove();
+    peelCurl.fold.remove();
     peelCurl = null;
   }
 
@@ -955,8 +940,8 @@
     const hit = e.target.closest && e.target.closest(".thread-hit");
     if (hit) { startPull(hit.dataset.threadId, e); return; }
 
-    // press the pad to arm a peel (a note comes off only when you pull away)
-    if (e.target.closest(".pad")) { armPeel(e); return; }
+    // press the pad to start a peel (the note comes off when the cursor leaves the pad)
+    if (e.target.closest(".pad")) { startPeel(e); return; }
 
     const el = e.target.closest(".note");
 
@@ -997,18 +982,8 @@
   board.addEventListener("pointermove", function (e) {
     if (pull) { updatePull(e); return; }
     if (link) { updateLink(e); return; }
-    if (padPeel) {
-      const pdx = e.clientX - padPeel.startX;
-      const pdy = e.clientY - padPeel.startY;
-      if (Math.hypot(pdx, pdy) <= 8) return; // not pulled far enough to start the turn
-      const sx = padPeel.startX, sy = padPeel.startY;
-      try { pad.releasePointerCapture(padPeel.pointerId); } catch (_) {}
-      padPeel = null;
-      startCurl(e, sx, sy);
-      return;
-    }
     if (peelCurl) {
-      if (!updateCurl(e)) return; // still turning the page
+      if (!updatePeel(e)) return; // still on the pad; corner keeps curling
       // committed -> `drag` is now set; fall through to position the note
     }
     if (!drag) return;
@@ -1039,15 +1014,13 @@
   board.addEventListener("pointerup", function (e) {
     if (pull) { finishPull(false); return; }
     if (link) { endLink(); return; }
-    if (peelCurl) { cancelCurl(); return; }  // let go mid-turn -> snap back, no note
-    if (padPeel) { cancelPeel(); return; }    // pressed but never pulled -> no note
+    if (peelCurl) { cancelPeel(); return; }  // let go while still on the pad -> no note
     endDrag(e);
   });
   board.addEventListener("pointercancel", function (e) {
     if (pull) { finishPull(false); return; }
     if (link) { endLink(); return; }
-    if (peelCurl) { cancelCurl(); return; }
-    if (padPeel) { cancelPeel(); return; }
+    if (peelCurl) { cancelPeel(); return; }
     endDrag(e);
   });
 
