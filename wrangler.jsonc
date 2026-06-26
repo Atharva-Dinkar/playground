@@ -12,7 +12,7 @@
     {
       "binding": "DB",
       "database_name": "sticky-board",
-      "database_id": "PASTE-YOUR-DATABASE-ID-HERE"
+      "database_id": "dfe84578-153b-4bbb-9085-7e6c8abe7e06"
     }
   ],
   "compatibility_flags": ["nodejs_compat"]
