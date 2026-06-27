@@ -674,7 +674,8 @@
   }
 
   function restSag(ax, ay, bx, by) {
-    return clamp(Math.hypot(bx - ax, by - ay) * 0.2, 14, 110);
+    // less sag = less slack = arc length closer to the straight-line distance
+    return clamp(Math.hypot(bx - ax, by - ay) * 0.13, 10, 75);
   }
 
   // the visible, full-length string: a catenary hanging between the two pins
