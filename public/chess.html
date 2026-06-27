@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="theme-color" content="#26242c" />
+<title>Chess Trainer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --board-bg: #26242c;
+    --bar-bg: #1d1b22;
+    --ui-text: #e7e3da;
+    --ui-muted: #9b958c;
+    --panel: #2f2c36;
+    --panel-hi: #3a3742;
+    --light: #e9e3cf;   /* light squares */
+    --dark: #6f8f5a;    /* dark squares  */
+    --accent: #e8a44d;
+    --good: #7ec46b;
+    --bad: #e0655a;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    height: 100%;
+    font-family: 'Inter', system-ui, sans-serif;
+    background: var(--board-bg);
+    color: var(--ui-text);
+  }
+  body { display: flex; flex-direction: column; min-height: 100%; overflow-x: hidden; }
+
+  .bar {
+    height: 60px;
+    flex: 0 0 60px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 20px;
+    background: var(--bar-bg);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    z-index: 10;
+  }
+  .tabs { display: flex; align-items: center; gap: 4px; }
+  .tab {
+    font-family: 'Caveat', cursive;
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    text-decoration: none;
+    color: var(--ui-muted);
+    padding: 4px 12px;
+    border-radius: 8px;
+    line-height: 1;
+    transition: color 0.15s ease, background 0.15s ease;
+  }
+  .tab:hover { color: var(--ui-text); background: rgba(255,255,255,0.05); }
+  .tab.active { color: var(--ui-text); background: rgba(255,255,255,0.08); }
+  .status { font-size: 13px; color: var(--accent); margin-left: 4px; }
+
+  /* ---------- layout ---------- */
+  .wrap {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 18px 16px 28px;
+  }
+
+  /* mode segmented control */
+  .modes {
+    display: inline-flex;
+    background: var(--panel);
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 10px;
+    padding: 3px;
+    gap: 3px;
+  }
+  .modes button {
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ui-muted);
+    background: transparent;
+    border: none;
+    border-radius: 7px;
+    padding: 8px 16px;
+    cursor: pointer;
+    transition: color 0.12s ease, background 0.12s ease;
+  }
+  .modes button:hover { color: var(--ui-text); }
+  .modes button.on { color: #1d1b22; background: var(--accent); }
+
+  /* prompt */
+  .prompt {
+    text-align: center;
+    min-height: 58px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+  }
+  .prompt .lead { font-size: 13px; color: var(--ui-muted); letter-spacing: 0.4px; text-transform: uppercase; }
+  .prompt .q { font-family: 'Caveat', cursive; font-size: 40px; font-weight: 700; line-height: 1; }
+  .prompt .q .sq { color: var(--accent); }
+  .prompt.flash-good .q, .prompt.flash-good .q .sq { color: var(--good); }
+  .prompt.flash-bad  .q, .prompt.flash-bad  .q .sq { color: var(--bad);  }
+
+  /* board */
+  :root { --board: min(92vw, 56vh, 460px); --sq: calc(var(--board) / 8); }
+  .boardwrap { position: relative; }
+  .cboard {
+    width: var(--board);
+    height: var(--board);
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    grid-template-rows: repeat(8, 1fr);
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+    touch-action: manipulation;
+  }
+  .sq {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    user-select: none;
+  }
+  .sq.light { background: var(--light); }
+  .sq.dark  { background: var(--dark); }
+  /* tiny coordinate labels (optional) */
+  .sq .lbl {
+    position: absolute;
+    font-size: calc(var(--sq) * 0.20);
+    font-weight: 700;
+    font-family: 'Inter', sans-serif;
+    opacity: 0.65;
+    pointer-events: none;
+  }
+  .sq.light .lbl { color: var(--dark); }
+  .sq.dark  .lbl { color: var(--light); }
+  .sq .lbl.file { right: 4px; bottom: 2px; }
+  .sq .lbl.rank { left: 4px; top: 2px; }
+
+  /* target marker (name mode) */
+  .sq .marker {
+    position: absolute;
+    inset: 0;
+    box-shadow: inset 0 0 0 4px var(--accent);
+    border-radius: 2px;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .sq.target .marker { opacity: 1; animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { box-shadow: inset 0 0 0 3px var(--accent); } 50% { box-shadow: inset 0 0 0 6px var(--accent); } }
+
+  /* feedback flashes */
+  .sq.good::after, .sq.bad::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+  }
+  .sq.good::after { background: rgba(126,196,107,0.85); animation: fade 0.6s ease forwards; }
+  .sq.bad::after  { background: rgba(224,101,90,0.85);  animation: fade 0.6s ease forwards; }
+  @keyframes fade { from { opacity: 1; } to { opacity: 0; } }
+
+  /* reveal the correct square on a miss */
+  .sq.reveal .reveal-mark {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-weight: 700; font-size: calc(var(--sq) * 0.28);
+    text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+    background: rgba(126,196,107,0.55);
+  }
+
+  /* answer pickers (name mode) */
+  .pickers { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+  .picker-row { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+  .pick {
+    width: 40px; height: 40px;
+    font-family: inherit; font-size: 16px; font-weight: 600;
+    color: var(--ui-text);
+    background: var(--panel);
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.1s ease, transform 0.06s ease;
+  }
+  .pick:hover { background: var(--panel-hi); }
+  .pick:active { transform: scale(0.93); }
+  .pick.sel { background: var(--accent); color: #1d1b22; border-color: var(--accent); }
+
+  /* scorebar */
+  .stats {
+    display: flex;
+    gap: 22px;
+    flex-wrap: wrap;
+    justify-content: center;
+    font-size: 13px;
+    color: var(--ui-muted);
+  }
+  .stats b { color: var(--ui-text); font-weight: 600; }
+
+  /* options row */
+  .opts { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; align-items: center; }
+  .toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ui-muted); cursor: pointer; user-select: none; }
+  .toggle input { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+  .btn {
+    font-family: inherit; font-size: 13px; font-weight: 600;
+    color: var(--ui-text);
+    background: var(--panel);
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 8px;
+    padding: 7px 14px;
+    cursor: pointer;
+  }
+  .btn:hover { background: var(--panel-hi); }
+
+  .hint { font-size: 12px; color: var(--ui-muted); min-height: 16px; text-align: center; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sq.target .marker, .sq.good::after, .sq.bad::after { animation: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <nav class="tabs">
+      <a href="/" class="tab">Sticky Board</a>
+      <a href="/chess.html" class="tab active">Chess Trainer</a>
+    </nav>
+    <span class="status" id="status"></span>
+  </div>
+
+  <div class="wrap">
+    <div class="modes" role="tablist" aria-label="Quiz mode">
+      <button id="modeFind" class="on">Find the square</button>
+      <button id="modeName">Name the square</button>
+    </div>
+
+    <div class="prompt" id="prompt">
+      <span class="lead" id="lead">Click the square</span>
+      <span class="q" id="q"></span>
+    </div>
+
+    <div class="boardwrap">
+      <div class="cboard" id="board" aria-label="Chessboard"></div>
+    </div>
+
+    <div class="pickers" id="pickers" hidden>
+      <div class="picker-row" id="fileRow"></div>
+      <div class="picker-row" id="rankRow"></div>
+    </div>
+
+    <div class="hint" id="hint"></div>
+
+    <div class="stats">
+      <span>Score <b id="sScore">0</b></span>
+      <span>Streak <b id="sStreak">0</b></span>
+      <span>Best <b id="sBest">0</b></span>
+      <span>Accuracy <b id="sAcc">—</b></span>
+    </div>
+
+    <div class="opts">
+      <label class="toggle"><input type="checkbox" id="optCoords" /> Show coordinates</label>
+      <label class="toggle"><input type="checkbox" id="optFlip" /> Black's view</label>
+      <button class="btn" id="reset">Reset this mode</button>
+    </div>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  const FILES = ["a","b","c","d","e","f","g","h"];
+
+  const boardEl   = document.getElementById("board");
+  const promptEl  = document.getElementById("prompt");
+  const leadEl    = document.getElementById("lead");
+  const qEl       = document.getElementById("q");
+  const hintEl    = document.getElementById("hint");
+  const pickersEl = document.getElementById("pickers");
+  const fileRow   = document.getElementById("fileRow");
+  const rankRow   = document.getElementById("rankRow");
+
+  const sScore  = document.getElementById("sScore");
+  const sStreak = document.getElementById("sStreak");
+  const sBest   = document.getElementById("sBest");
+  const sAcc    = document.getElementById("sAcc");
+  const statusEl = document.getElementById("status");
+
+  let mode = "find";          // "find" (notation -> click) | "name" (square -> notation)
+  let flipped = false;
+  let showCoords = false;
+
+  let target = null;          // {f, r} 0-indexed, r=0 is rank 1 (white's back rank)
+  let locked = false;         // true while showing feedback between questions
+  let pendingFile = null, pendingRank = null;
+
+  let streak = 0;             // live, per-session streak for the active mode
+  // lifetime stats per mode, loaded from (and synced to) the D1-backed API
+  const stats = {
+    find: { correct: 0, attempts: 0, best_streak: 0 },
+    name: { correct: 0, attempts: 0, best_streak: 0 }
+  };
+
+  /* ---------- storage: the Worker + D1 API ---------- */
+  let statusTimer = null;
+  function flagSync() {
+    statusEl.textContent = "⚠ sync error";
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(function () { statusEl.textContent = ""; }, 4000);
+  }
+  const API = {
+    async list() {
+      const r = await fetch("/api/chess");
+      if (!r.ok) throw new Error("load failed: " + r.status);
+      return await r.json();
+    },
+    async record(m, correct, str) {
+      try {
+        await fetch("/api/chess/" + m, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ correct: correct, streak: str })
+        });
+      } catch (e) { console.error("stat save failed", e); flagSync(); }
+    },
+    async reset(m) {
+      try {
+        await fetch("/api/chess/" + m, { method: "DELETE" });
+      } catch (e) { console.error("stat reset failed", e); flagSync(); }
+    }
+  };
+
+  const sqEls = new Map();    // "f,r" -> element
+  const rand = (n) => Math.floor(Math.random() * n);
+  const notation = (f, r) => FILES[f] + (r + 1);
+
+  /* ---------- board ---------- */
+  function buildBoard() {
+    boardEl.innerHTML = "";
+    sqEls.clear();
+    // top-to-bottom display order of ranks, left-to-right of files
+    const ranks = flipped ? [0,1,2,3,4,5,6,7] : [7,6,5,4,3,2,1,0];
+    const files = flipped ? [7,6,5,4,3,2,1,0] : [0,1,2,3,4,5,6,7];
+    const bottomRank = ranks[ranks.length - 1];
+    const leftFile = files[0];
+
+    for (const r of ranks) {
+      for (const f of files) {
+        const sq = document.createElement("div");
+        const isLight = (f + r) % 2 === 1;
+        sq.className = "sq " + (isLight ? "light" : "dark");
+        sq.dataset.f = f;
+        sq.dataset.r = r;
+
+        const marker = document.createElement("div");
+        marker.className = "marker";
+        sq.appendChild(marker);
+
+        const rev = document.createElement("div");
+        rev.className = "reveal-mark";
+        rev.textContent = "✓";
+        sq.appendChild(rev);
+
+        if (showCoords) {
+          if (r === bottomRank) {
+            const fl = document.createElement("span");
+            fl.className = "lbl file";
+            fl.textContent = FILES[f];
+            sq.appendChild(fl);
+          }
+          if (f === leftFile) {
+            const rk = document.createElement("span");
+            rk.className = "lbl rank";
+            rk.textContent = String(r + 1);
+            sq.appendChild(rk);
+          }
+        }
+
+        sqEls.set(f + "," + r, sq);
+        boardEl.appendChild(sq);
+      }
+    }
+    if (mode === "name" && target) markTarget();
+  }
+
+  function markTarget() {
+    sqEls.forEach((el) => el.classList.remove("target"));
+    if (!target) return;
+    const el = sqEls.get(target.f + "," + target.r);
+    if (el) el.classList.add("target");
+  }
+
+  /* ---------- pickers (name mode) ---------- */
+  function buildPickers() {
+    fileRow.innerHTML = "";
+    rankRow.innerHTML = "";
+    FILES.forEach((ch, f) => {
+      const b = document.createElement("button");
+      b.className = "pick";
+      b.textContent = ch;
+      b.dataset.file = f;
+      fileRow.appendChild(b);
+    });
+    for (let r = 0; r < 8; r++) {
+      const b = document.createElement("button");
+      b.className = "pick";
+      b.textContent = String(r + 1);
+      b.dataset.rank = r;
+      rankRow.appendChild(b);
+    }
+  }
+
+  function refreshPickerSel() {
+    fileRow.querySelectorAll(".pick").forEach((b) =>
+      b.classList.toggle("sel", Number(b.dataset.file) === pendingFile));
+    rankRow.querySelectorAll(".pick").forEach((b) =>
+      b.classList.toggle("sel", Number(b.dataset.rank) === pendingRank));
+  }
+
+  /* ---------- questions ---------- */
+  function newQuestion() {
+    locked = false;
+    pendingFile = null; pendingRank = null;
+    refreshPickerSel();
+    sqEls.forEach((el) => el.classList.remove("good", "bad", "reveal", "target"));
+    promptEl.classList.remove("flash-good", "flash-bad");
+
+    target = { f: rand(8), r: rand(8) };
+
+    if (mode === "find") {
+      leadEl.textContent = "Click the square";
+      qEl.innerHTML = '<span class="sq">' + notation(target.f, target.r) + "</span>";
+      hintEl.textContent = "";
+    } else {
+      leadEl.textContent = "Name the highlighted square";
+      qEl.textContent = "?";
+      hintEl.textContent = "Pick a file (a–h) and rank (1–8), or just type it.";
+      markTarget();
+    }
+  }
+
+  function setStats() {
+    const s = stats[mode];
+    sScore.textContent = s.correct;
+    sStreak.textContent = streak;
+    sBest.textContent = s.best_streak;
+    sAcc.textContent = s.attempts ? Math.round((s.correct / s.attempts) * 100) + "%" : "—";
+  }
+
+  function judge(f, r) {
+    if (locked || !target) return;
+    locked = true;
+    const s = stats[mode];
+    s.attempts++;
+    const correct = (f === target.f && r === target.r);
+
+    if (correct) {
+      s.correct++; streak++;
+      if (streak > s.best_streak) s.best_streak = streak;
+      const el = sqEls.get(f + "," + r);
+      if (el) { el.classList.add("good"); }
+      promptEl.classList.add("flash-good");
+      setStats();
+      API.record(mode, true, streak);
+      setTimeout(newQuestion, 650);
+    } else {
+      streak = 0;
+      promptEl.classList.add("flash-bad");
+      const picked = sqEls.get(f + "," + r);
+      if (picked) picked.classList.add("bad");
+      const right = sqEls.get(target.f + "," + target.r);
+      if (right) right.classList.add("reveal");
+      // show what the right answer was
+      hintEl.textContent = "That was " + notation(f, r) +
+        " — the square is " + notation(target.f, target.r) + ".";
+      qEl.innerHTML = mode === "find"
+        ? '<span class="sq">' + notation(target.f, target.r) + "</span>"
+        : notation(target.f, target.r);
+      setStats();
+      API.record(mode, false, 0);
+      setTimeout(newQuestion, 1400);
+    }
+  }
+
+  /* ---------- input ---------- */
+  boardEl.addEventListener("click", function (e) {
+    if (mode !== "find" || locked) return;
+    const sq = e.target.closest(".sq");
+    if (!sq) return;
+    judge(Number(sq.dataset.f), Number(sq.dataset.r));
+  });
+
+  function tryPickSubmit() {
+    if (pendingFile != null && pendingRank != null) {
+      judge(pendingFile, pendingRank);
+    }
+  }
+
+  pickersEl.addEventListener("click", function (e) {
+    if (mode !== "name" || locked) return;
+    const b = e.target.closest(".pick");
+    if (!b) return;
+    if (b.dataset.file != null) pendingFile = Number(b.dataset.file);
+    if (b.dataset.rank != null) pendingRank = Number(b.dataset.rank);
+    refreshPickerSel();
+    tryPickSubmit();
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (mode !== "name" || locked) return;
+    const k = e.key.toLowerCase();
+    if (k >= "a" && k <= "h") { pendingFile = k.charCodeAt(0) - 97; refreshPickerSel(); tryPickSubmit(); }
+    else if (k >= "1" && k <= "8") { pendingRank = Number(k) - 1; refreshPickerSel(); tryPickSubmit(); }
+  });
+
+  /* ---------- mode + options ---------- */
+  function setMode(m) {
+    mode = m;
+    streak = 0; // streak is per active mode
+    document.getElementById("modeFind").classList.toggle("on", m === "find");
+    document.getElementById("modeName").classList.toggle("on", m === "name");
+    pickersEl.hidden = (m !== "name");
+    setStats();
+    newQuestion();
+  }
+
+  document.getElementById("modeFind").addEventListener("click", () => setMode("find"));
+  document.getElementById("modeName").addEventListener("click", () => setMode("name"));
+
+  document.getElementById("optCoords").addEventListener("change", function (e) {
+    showCoords = e.target.checked;
+    buildBoard();
+  });
+  document.getElementById("optFlip").addEventListener("change", function (e) {
+    flipped = e.target.checked;
+    buildBoard();
+  });
+  document.getElementById("reset").addEventListener("click", function () {
+    const s = stats[mode];
+    s.correct = 0; s.attempts = 0; s.best_streak = 0;
+    streak = 0;
+    API.reset(mode);
+    setStats();
+    newQuestion();
+  });
+
+  /* ---------- init ---------- */
+  buildBoard();
+  buildPickers();
+  setStats();
+  newQuestion();
+
+  // pull lifetime stats from the server (best-effort; the trainer works offline too)
+  (async function loadStats() {
+    try {
+      const rows = await API.list();
+      rows.forEach(function (row) {
+        if (stats[row.mode]) {
+          stats[row.mode] = {
+            correct: row.correct || 0,
+            attempts: row.attempts || 0,
+            best_streak: row.best_streak || 0
+          };
+        }
+      });
+      setStats();
+    } catch (e) {
+      console.error(e);
+      flagSync();
+    }
+  })();
+})();
+</script>
+</body>
+</html>

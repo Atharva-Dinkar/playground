@@ -48,6 +48,22 @@
     font-weight: 700;
     letter-spacing: 0.5px;
   }
+  /* shared site tabs */
+  .tabs { display: flex; align-items: center; gap: 4px; }
+  .tab {
+    font-family: 'Caveat', cursive;
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    text-decoration: none;
+    color: var(--ui-muted);
+    padding: 4px 12px;
+    border-radius: 8px;
+    line-height: 1;
+    transition: color 0.15s ease, background 0.15s ease;
+  }
+  .tab:hover { color: var(--ui-text); background: rgba(255,255,255,0.05); }
+  .tab.active { color: var(--ui-text); background: rgba(255,255,255,0.08); }
   .count { font-size: 13px; color: var(--ui-muted); }
   .status { font-size: 13px; color: #e8a44d; margin-left: 4px; }
 
@@ -340,7 +356,10 @@
 </head>
 <body>
   <div class="bar">
-    <h1>Sticky Board</h1>
+    <nav class="tabs">
+      <a href="/" class="tab active">Sticky Board</a>
+      <a href="/chess.html" class="tab">Chess Trainer</a>
+    </nav>
     <span class="count" id="count"></span>
     <span class="status" id="status"></span>
   </div>

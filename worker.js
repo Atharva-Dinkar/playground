@@ -23,6 +23,14 @@ export default {
       }
     }
 
+    if (url.pathname.startsWith("/api/chess")) {
+      try {
+        return await handleChess(request, env, url);
+      } catch (err) {
+        return json({ error: String(err) }, 500);
+      }
+    }
+
     // Not an API route -> serve the static site (index.html, etc.)
     return env.ASSETS.fetch(request);
   },
@@ -129,6 +137,57 @@ async function handleThreads(request, env, url) {
   // DELETE /api/threads/{id}
   if (method === "DELETE" && id) {
     await db.prepare("DELETE FROM threads WHERE id = ?").bind(id).run();
+    return json({ ok: true });
+  }
+
+  return json({ error: "Not found" }, 404);
+}
+
+async function handleChess(request, env, url) {
+  const db = env.DB;
+  const method = request.method;
+
+  // Path is either /api/chess or /api/chess/{mode}
+  const parts = url.pathname.split("/").filter(Boolean); // ["api", "chess", mode?]
+  const mode = parts[2] ? decodeURIComponent(parts[2]) : null;
+  const validMode = mode === "find" || mode === "name";
+
+  // GET /api/chess  -> lifetime stats for every mode
+  if (method === "GET" && !mode) {
+    const { results } = await db
+      .prepare("SELECT mode, correct, attempts, best_streak FROM chess_stats")
+      .all();
+    return json(results || []);
+  }
+
+  // POST /api/chess/{mode}  -> record one answer (increments the running totals)
+  if (method === "POST" && validMode) {
+    const body = await request.json();
+    const isCorrect = body.correct ? 1 : 0;
+    const streak = Math.max(0, Math.trunc(Number(body.streak) || 0));
+    const now = Date.now();
+    await db
+      .prepare(
+        `INSERT INTO chess_stats (mode, correct, attempts, best_streak, updated_at)
+         VALUES (?, ?, 1, ?, ?)
+         ON CONFLICT(mode) DO UPDATE SET
+           correct = correct + ?,
+           attempts = attempts + 1,
+           best_streak = MAX(best_streak, ?),
+           updated_at = ?`
+      )
+      .bind(mode, isCorrect, streak, now, isCorrect, streak, now)
+      .run();
+    const row = await db
+      .prepare("SELECT mode, correct, attempts, best_streak FROM chess_stats WHERE mode = ?")
+      .bind(mode)
+      .first();
+    return json(row || { mode, correct: isCorrect, attempts: 1, best_streak: streak });
+  }
+
+  // DELETE /api/chess/{mode}  -> reset that mode's stats
+  if (method === "DELETE" && validMode) {
+    await db.prepare("DELETE FROM chess_stats WHERE mode = ?").bind(mode).run();
     return json({ ok: true });
   }
 
