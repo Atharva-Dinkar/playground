@@ -55,11 +55,20 @@
     position: absolute;
     inset: 60px 0 0 0;
     background-color: var(--board-bg);
-    background-image: radial-gradient(var(--board-dot) 1.4px, transparent 1.4px);
-    background-size: 26px 26px;
     overflow: hidden;
     touch-action: none;
+    cursor: grab; /* empty board drags to pan */
   }
+  /* the pannable world — a fixed-size canvas (same on every device) that holds
+     all the notes and threads; its size is set in JS to match WORLD_W/WORLD_H */
+  .world {
+    position: absolute;
+    top: 0; left: 0;
+    background-image: radial-gradient(var(--board-dot) 1.4px, transparent 1.4px);
+    background-size: 26px 26px;
+    will-change: transform;
+  }
+  .board.panning { cursor: grabbing; }
   .board.linking { cursor: crosshair; }
   .board.pulling { cursor: grabbing; }
   /* while dragging a new string, don't let existing strings steal the drop */
@@ -307,7 +316,9 @@
   </div>
 
   <div class="board" id="board">
-    <svg class="threads" id="threads" aria-hidden="true"></svg>
+    <div class="world" id="world">
+      <svg class="threads" id="threads" aria-hidden="true"></svg>
+    </div>
 
     <div class="pad" id="pad" title="Peel a note onto the board" role="button" aria-label="Peel a new note">
       <span class="pad-sheet s3"></span>
@@ -330,8 +341,11 @@
   const NOTE = 150;
   const SVGNS = "http://www.w3.org/2000/svg";
   const BREAK_PULL = 120; // how far you must pull a string before it snaps
+  const WORLD_W = 3000;   // fixed virtual board — same coordinates on every device
+  const WORLD_H = 2000;
 
   const board = document.getElementById("board");
+  const world = document.getElementById("world");
   const empty = document.getElementById("empty");
   const countEl = document.getElementById("count");
   const statusEl = document.getElementById("status");
@@ -352,6 +366,20 @@
   let linkTarget = null;       // note id currently hovered as a link target
   let linkTempEl = null;       // temporary <path> shown while dragging a string
   let pull = null;             // pulling a string to break it: {id, pointerId}
+  let pan = null;              // panning the board: {pointerId, startX, startY, baseX, baseY, moved}
+  let panX = 0, panY = 0;      // current world offset
+
+  /* ---------- world pan / coordinate mapping ---------- */
+  function applyPan() { world.style.transform = "translate(" + panX + "px," + panY + "px)"; }
+  function clampPan() {
+    panX = clamp(panX, Math.min(0, board.clientWidth - WORLD_W), 0);
+    panY = clamp(panY, Math.min(0, board.clientHeight - WORLD_H), 0);
+  }
+  // map a screen/client point to world coordinates (undo board offset + pan)
+  function toWorld(clientX, clientY) {
+    const r = board.getBoundingClientRect();
+    return { x: clientX - r.left - panX, y: clientY - r.top - panY };
+  }
 
   /* ---------- storage: the Worker + D1 API ---------- */
   let statusTimer = null;
@@ -407,8 +435,8 @@
   const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
   function clampNote(n) {
-    n.x = clamp(n.x, 0, Math.max(0, board.clientWidth  - NOTE));
-    n.y = clamp(n.y, 0, Math.max(0, board.clientHeight - NOTE));
+    n.x = clamp(n.x, 0, WORLD_W - NOTE);
+    n.y = clamp(n.y, 0, WORLD_H - NOTE);
   }
 
   function applyTransform(el, n, lift) {
@@ -500,7 +528,7 @@
     el.appendChild(ta);
 
     renderText(el, n);
-    board.appendChild(el);
+    world.appendChild(el);
     els.set(n.id, el);
     return el;
   }
@@ -632,8 +660,8 @@
   // press the pad -> a note lifts off in the pad's colour and follows the pointer
   function startPeel(e) {
     e.preventDefault();
-    const r = board.getBoundingClientRect();
-    const made = makeNote(e.clientX - r.left - NOTE / 2, e.clientY - r.top - NOTE / 2, nextColor);
+    const w = toWorld(e.clientX, e.clientY);
+    const made = makeNote(w.x - NOTE / 2, w.y - NOTE / 2, nextColor);
     const n = made.n, el = made.el;
 
     // advance the pad to the next note's colour
@@ -783,9 +811,8 @@
     const nb = notes.find(x => x.id === t.b);
     if (!na || !nb) return;
     const a = anchor(na), b = anchor(nb);
-    const r = board.getBoundingClientRect();
-    const px = e.clientX - r.left;
-    const py = e.clientY - r.top;
+    const w = toWorld(e.clientX, e.clientY);
+    const px = w.x, py = w.y;
 
     const d = pulledPath(a.x, a.y, b.x, b.y, px, py);
     pair.hit.setAttribute("d", d);
@@ -832,9 +859,8 @@
     const from = notes.find(x => x.id === link.fromId);
     if (!from) return;
     const a = anchor(from);
-    const r = board.getBoundingClientRect();
-    const px = e.clientX - r.left;
-    const py = e.clientY - r.top;
+    const w = toWorld(e.clientX, e.clientY);
+    const px = w.x, py = w.y;
     linkTempEl.setAttribute("d", curve(a.x, a.y, px, py));
 
     // which note is under the cursor?
@@ -873,8 +899,14 @@
 
     const el = e.target.closest(".note");
 
-    // clicked empty board -> deselect
-    if (!el) { select(null); stopEdit(); return; }
+    // empty board -> drag to pan (a click with no movement deselects)
+    if (!el) {
+      stopEdit();
+      pan = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, baseX: panX, baseY: panY, moved: false };
+      board.classList.add("panning");
+      try { board.setPointerCapture(e.pointerId); } catch (_) {}
+      return;
+    }
 
     const id = el.dataset.id;
     const n = notes.find(x => x.id === id);
@@ -908,6 +940,15 @@
   });
 
   board.addEventListener("pointermove", function (e) {
+    if (pan) {
+      const dx = e.clientX - pan.startX, dy = e.clientY - pan.startY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) pan.moved = true;
+      panX = pan.baseX + dx;
+      panY = pan.baseY + dy;
+      clampPan();
+      applyPan();
+      return;
+    }
     if (pull) { updatePull(e); return; }
     if (link) { updateLink(e); return; }
     if (!drag) return;
@@ -935,16 +976,35 @@
     }
   }
 
+  function endPan(e) {
+    const moved = pan.moved;
+    try { board.releasePointerCapture(pan.pointerId); } catch (_) {}
+    pan = null;
+    board.classList.remove("panning");
+    if (!moved) select(null); // a click on empty board (no drag) just deselects
+  }
+
   board.addEventListener("pointerup", function (e) {
+    if (pan) { endPan(e); return; }
     if (pull) { finishPull(false); return; }
     if (link) { endLink(); return; }
     endDrag(e);
   });
   board.addEventListener("pointercancel", function (e) {
+    if (pan) { endPan(e); return; }
     if (pull) { finishPull(false); return; }
     if (link) { endLink(); return; }
     endDrag(e);
   });
+
+  // wheel / trackpad scrolls the board too
+  board.addEventListener("wheel", function (e) {
+    e.preventDefault();
+    panX -= e.deltaX;
+    panY -= e.deltaY;
+    clampPan();
+    applyPan();
+  }, { passive: false });
 
   /* ---------- editing triggers ---------- */
   board.addEventListener("dblclick", function (e) {
@@ -954,8 +1014,8 @@
       const n = notes.find(x => x.id === el.dataset.id);
       if (n) { select(n.id); startEdit(n, el); }
     } else {
-      const r = board.getBoundingClientRect();
-      addNoteAt(e.clientX - r.left, e.clientY - r.top);
+      const w = toWorld(e.clientX, e.clientY);
+      addNoteAt(w.x, w.y);
     }
   });
 
@@ -980,16 +1040,17 @@
   });
 
   window.addEventListener("resize", function () {
-    notes.forEach(function (n) {
-      clampNote(n);
-      const el = els.get(n.id);
-      if (el && (!drag || drag.id !== n.id)) applyTransform(el, n, false);
-    });
-    positionAllThreads();
+    clampPan(); // keep the world covering the (resized) viewport; notes don't move
+    applyPan();
   });
 
   /* ---------- init ---------- */
   (async function init() {
+    world.style.width = WORLD_W + "px";
+    world.style.height = WORLD_H + "px";
+    clampPan();
+    applyPan();
+
     nextColor = randomColor();
     setPadColor(nextColor); // the pad shows the colour of the next note to peel
 
