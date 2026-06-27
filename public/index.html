@@ -55,18 +55,18 @@
     position: absolute;
     inset: 60px 0 0 0;
     background-color: var(--board-bg);
+    /* dot grid lives here so it tiles infinitely; JS pans/zooms it with the world */
+    background-image: radial-gradient(var(--board-dot) 1.4px, transparent 1.4px);
+    background-size: 26px 26px;
     overflow: hidden;
     touch-action: none;
     cursor: grab; /* empty board drags to pan */
   }
-  /* the pannable world — a fixed-size canvas (same on every device) that holds
-     all the notes and threads; its size is set in JS to match WORLD_W/WORLD_H */
+  /* the pannable world holds all the notes and threads */
   .world {
     position: absolute;
     top: 0; left: 0;
     transform-origin: 0 0;
-    background-image: radial-gradient(var(--board-dot) 1.4px, transparent 1.4px);
-    background-size: 26px 26px;
     will-change: transform;
   }
   .board.panning { cursor: grabbing; }
@@ -407,11 +407,12 @@
   /* ---------- world pan / zoom / coordinate mapping ---------- */
   function applyPan() {
     world.style.transform = "translate(" + panX + "px," + panY + "px) scale(" + scale + ")";
+    // move + scale the dot grid with the world (it tiles, so it never runs out)
+    const g = 26 * scale;
+    board.style.backgroundPosition = panX + "px " + panY + "px";
+    board.style.backgroundSize = g + "px " + g + "px";
   }
-  function clampPan() {
-    panX = clamp(panX, Math.min(0, board.clientWidth  - WORLD_W * scale), 0);
-    panY = clamp(panY, Math.min(0, board.clientHeight - WORLD_H * scale), 0);
-  }
+  function clampPan() { /* free panning — the canvas extends in every direction */ }
   // map a screen/client point to world coordinates (undo board offset, pan, zoom)
   function toWorld(clientX, clientY) {
     const r = board.getBoundingClientRect();
@@ -503,8 +504,9 @@
   const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
   function clampNote(n) {
-    n.x = clamp(n.x, 0, WORLD_W - NOTE);
-    n.y = clamp(n.y, 0, WORLD_H - NOTE);
+    // generous bounds so notes can live anywhere you pan to (incl. negative space)
+    n.x = clamp(n.x, -12000, 12000);
+    n.y = clamp(n.y, -12000, 12000);
   }
 
   function applyTransform(el, n, lift) {
