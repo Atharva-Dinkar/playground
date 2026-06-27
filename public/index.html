@@ -654,40 +654,48 @@
     return { x: n.x + NOTE / 2, y: n.y };
   }
 
-  // control point for the resting string: sags below the midpoint by some gravity
-  function controlPoint(ax, ay, bx, by) {
-    const dist = Math.hypot(bx - ax, by - ay);
-    const sag = clamp(dist * 0.18, 16, 90);
-    return { x: (ax + bx) / 2, y: (ay + by) / 2 + sag };
+  // normalized catenary dip: 0 at the ends, 1 at the middle (gravity hangs it down)
+  const CAT_K = 1.9; // curvature — higher looks more like a hanging chain
+  function catDip(t) {
+    return (Math.cosh(CAT_K) - Math.cosh(CAT_K * (2 * t - 1))) / (Math.cosh(CAT_K) - 1);
   }
 
-  // a quadratic curve with a little gravity (the visible, full-length string)
+  // sample a catenary from A to B (sag added straight down, i.e. gravity), as a polyline
+  function catenary(ax, ay, bx, by, sag, t0, t1, steps) {
+    t0 = t0 || 0; t1 = (t1 == null ? 1 : t1); steps = steps || 18;
+    let d = "";
+    for (let i = 0; i <= steps; i++) {
+      const t = t0 + (t1 - t0) * (i / steps);
+      const x = ax + (bx - ax) * t;
+      const y = ay + (by - ay) * t + sag * catDip(t);
+      d += (i === 0 ? "M " : "L ") + x.toFixed(2) + " " + y.toFixed(2) + " ";
+    }
+    return d.trim();
+  }
+
+  function restSag(ax, ay, bx, by) {
+    return clamp(Math.hypot(bx - ax, by - ay) * 0.2, 14, 110);
+  }
+
+  // the visible, full-length string: a catenary hanging between the two pins
   function curve(ax, ay, bx, by) {
-    const c = controlPoint(ax, ay, bx, by);
-    return "M " + ax + " " + ay + " Q " + c.x + " " + c.y + " " + bx + " " + by;
+    return catenary(ax, ay, bx, by, restSag(ax, ay, bx, by), 0, 1, 20);
   }
 
   // the clickable "grab" region: only the MIDDLE of the string, so the endpoints
   // (which sit on the pins) never intercept clicks and can't be used to break it
   function hitPathD(ax, ay, bx, by) {
-    const c = controlPoint(ax, ay, bx, by);
-    const T0 = 0.18, T1 = 0.82, STEPS = 12;
-    let d = "";
-    for (let i = 0; i <= STEPS; i++) {
-      const t = T0 + (T1 - T0) * (i / STEPS);
-      const u = 1 - t;
-      const x = u * u * ax + 2 * u * t * c.x + t * t * bx;
-      const y = u * u * ay + 2 * u * t * c.y + t * t * by;
-      d += (i === 0 ? "M " : "L ") + x + " " + y + " ";
-    }
-    return d.trim();
+    return catenary(ax, ay, bx, by, restSag(ax, ay, bx, by), 0.18, 0.82, 12);
   }
 
-  // a quadratic whose curve passes through point P at its midpoint (for pulling)
-  function curveThrough(ax, ay, bx, by, px, py) {
-    const cx = 2 * px - (ax + bx) / 2;
-    const cy = 2 * py - (ay + by) / 2;
-    return "M " + ax + " " + ay + " Q " + cx + " " + cy + " " + bx + " " + by;
+  // a string pulled at point P: two taut catenary segments meeting in a V at P
+  function pulledPath(ax, ay, bx, by, px, py) {
+    const s1 = Math.hypot(px - ax, py - ay) * 0.05;
+    const s2 = Math.hypot(bx - px, by - py) * 0.05;
+    const first = catenary(ax, ay, px, py, s1, 0, 1, 8);
+    // append the second half, skipping its duplicate start point at P
+    const rest = catenary(px, py, bx, by, s2, 0, 1, 8).replace(/^M[^L]*L/, "L");
+    return first + " " + rest;
   }
 
   function findThreadBetween(a, b) {
@@ -778,7 +786,7 @@
     const px = e.clientX - r.left;
     const py = e.clientY - r.top;
 
-    const d = curveThrough(a.x, a.y, b.x, b.y, px, py);
+    const d = pulledPath(a.x, a.y, b.x, b.y, px, py);
     pair.hit.setAttribute("d", d);
     pair.vis.setAttribute("d", d);
 
